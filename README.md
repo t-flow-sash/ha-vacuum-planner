@@ -23,7 +23,9 @@ Leitplanken:
 
 - [Produktanforderungen](docs/requirements.md)
 - [Bekannter Ausgangszustand](docs/current-state.md)
-- [Architekturentscheidung](docs/adr/0001-solution-shape.md) *(folgt nach Review)*
+- [Architekturentscheidung](docs/adr/0001-solution-shape.md) *(in Review)*
+- [Queue- und Block-Semantik](docs/queue-semantics.md)
+- [Universeller Entity-Vertrag](docs/entity-contract.md)
 - [Kompatibilitätsmatrix](docs/compatibility.md) *(in Arbeit)*
 - [UX-Spezifikation](docs/ux-specification.md) *(in Arbeit)*
 - [Roadmap](docs/roadmap.md) *(in Arbeit)*
