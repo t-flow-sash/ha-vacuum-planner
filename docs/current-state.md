@@ -42,6 +42,10 @@ Die aktuelle Installation verteilt Planner-Zustand und Logik über YAML-Helper, 
 - Raumkarten mit Aktivierung, Skip, Modus und Intervallen
 - starke Kopplung an konkrete Dreame-Entitäten, Segment-IDs und Mushroom/stack-in-card/card_mod
 
+## Native Area-Readiness
+
+Beide aktuell erkannten Sauger melden das Home-Assistant-Feature `CLEAN_AREA`. Bei der read-only Prüfung war die Segment→Area-Zuordnung für den Eufy vollständig hinterlegt, für den Dreame/Mova jedoch noch leer. Das bestätigt den benötigten Onboarding-Gate: Ein Gerät kann Area Cleaning technisch unterstützen und trotzdem noch nicht einsatzbereit sein, solange der Benutzer unter **Entität → Einstellungen → „Map vacuum segments to areas“** keine Zuordnung gespeichert hat.
+
 ## Zu bewahrendes Verhalten
 
 - Aufgaben sind Saugen oder Saugen+Wischen; kein reines Wischen.

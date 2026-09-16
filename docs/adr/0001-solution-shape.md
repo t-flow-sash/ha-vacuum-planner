@@ -11,6 +11,10 @@ Ein reiner Automation- oder Script-Blueprint kann Benutzerlogik wiederverwendbar
 
 Eine **Custom Integration mit optionalen Blueprints/Beispielautomationen** ist der führende Lösungsweg.
 
+Die aktuelle Home-Assistant-Vacuum-API stellt mit `vacuum.clean_area` bereits eine entscheidende native Basis bereit: Benutzer ordnen vom Roboter gemeldete Segmente in den Einstellungen HA-Areas zu; der Service akzeptiert mehrere Areas in einer vom Benutzer vorgegebenen Reihenfolge. Der Planner muss diese Zuordnung weder duplizieren noch rohe Segment-IDs zum primären Datenmodell machen. Er muss beim Onboarding aber prüfen, ob `VacuumEntityFeature.CLEAN_AREA` und ein vollständiges `area_mapping` vorhanden sind.
+
+Ein einzelner `vacuum.clean_area`-Aufruf ist noch keine herstellerübergreifende Garantie für eine transaktionale Gerätequeue oder raumgenaue Abschlussbestätigung. Daher bleibt ein persistentes Planner-Ledger erforderlich.
+
 Der Integration-Core verantwortet:
 
 - Config Flow und Options Flow
