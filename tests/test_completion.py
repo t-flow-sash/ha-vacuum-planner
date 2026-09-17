@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -10,6 +11,7 @@ from custom_components.vacuum_planner.domain.models import (
     DispatchStrategy,
     JobState,
     Mode,
+    PlannerState,
     PlanRevision,
     PreferredMode,
     QueueLedger,
@@ -17,6 +19,10 @@ from custom_components.vacuum_planner.domain.models import (
 )
 from custom_components.vacuum_planner.domain.planning import AreaBinding, build_due_snapshot
 from custom_components.vacuum_planner.domain.queue import start_due_block
+from custom_components.vacuum_planner.domain.serialization import (
+    deserialize_planner_state,
+    serialize_planner_state,
+)
 
 NOW = datetime(2026, 9, 17, 8, tzinfo=UTC)
 
@@ -101,6 +107,40 @@ def test_completed_vacuum_advances_plan_and_clears_immediate_due_work() -> None:
     assert (
         build_due_snapshot(
             result.plan_revision,
+            {"kitchen": AreaBinding("kitchen", "Kitchen", 4, True)},
+            NOW,
+        ).jobs
+        == ()
+    )
+
+
+def test_completed_job_and_advanced_plan_survive_one_restart_roundtrip() -> None:
+    ledger, revision = running_job(Mode.VACUUM_AND_MOP)
+    completed = queue_commands.complete_job_and_advance_plan(
+        ledger,
+        revision,
+        "id-2",
+        NOW,
+        "rev-2",
+    )
+
+    restored = deserialize_planner_state(
+        json.loads(
+            json.dumps(
+                serialize_planner_state(
+                    PlannerState(completed.plan_revision, completed.ledger)
+                )
+            )
+        )
+    )
+
+    assert restored.ledger.jobs[0].state is JobState.COMPLETED
+    assert restored.ledger.blocks[0].state is BlockState.COMPLETED
+    assert restored.plan_revision.room_plans[0].last_completed_vacuum_at == NOW
+    assert restored.plan_revision.room_plans[0].last_completed_vacuum_and_mop_at == NOW
+    assert (
+        build_due_snapshot(
+            restored.plan_revision,
             {"kitchen": AreaBinding("kitchen", "Kitchen", 4, True)},
             NOW,
         ).jobs

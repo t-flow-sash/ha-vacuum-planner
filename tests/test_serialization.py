@@ -1,5 +1,6 @@
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -11,6 +12,7 @@ from custom_components.vacuum_planner.domain.models import (
     DispatchStrategy,
     JobState,
     Mode,
+    PlannerState,
     PlanRevision,
     PlanSnapshot,
     PreferredMode,
@@ -24,9 +26,11 @@ from custom_components.vacuum_planner.domain.serialization import (
     deserialize_ledger,
     deserialize_plan_revision,
     deserialize_plan_snapshot,
+    deserialize_planner_state,
     serialize_ledger,
     serialize_plan_revision,
     serialize_plan_snapshot,
+    serialize_planner_state,
 )
 
 NOW = datetime(2026, 9, 17, 8, 0, 0, 123456, tzinfo=UTC)
@@ -78,6 +82,26 @@ def ledger() -> QueueLedger:
     ).ledger
     committing = started.replace_block_state("id-1", BlockState.COMMITTING, NOW)
     return committing.replace_block_state("id-1", BlockState.UNCERTAIN, NOW)
+
+
+@pytest.mark.parametrize("missing", ["plan_revision", "ledger"])
+def test_planner_state_rejects_torn_payload(missing: str) -> None:
+    payload = serialize_planner_state(PlannerState(revision(), ledger()))
+    payload["data"].pop(missing)
+
+    with pytest.raises(ValueError, match=f"missing {missing}"):
+        deserialize_planner_state(payload)
+
+
+def test_planner_state_rejects_plan_for_another_queue_lane() -> None:
+    current_revision = revision()
+    other_lane_room = replace(current_revision.room_plans[0], lane_id="other-lane")
+
+    with pytest.raises(ValueError, match="plan lane does not match ledger lane"):
+        PlannerState(
+            replace(current_revision, room_plans=(other_lane_room,)),
+            ledger(),
+        )
 
 
 @pytest.mark.parametrize(

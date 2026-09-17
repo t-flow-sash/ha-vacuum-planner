@@ -673,3 +673,18 @@ class QueueLedger:
             )
         jobs = tuple(changed if job.job_id == job_id else job for job in self.jobs)
         return replace(self, revision=self.revision + 1, jobs=jobs)
+
+
+@dataclass(frozen=True, slots=True)
+class PlannerState:
+    """Persistable root containing one lane's plan and authoritative queue."""
+
+    plan_revision: PlanRevision
+    ledger: QueueLedger
+
+    def __post_init__(self) -> None:
+        if not self.plan_revision.room_plans:
+            return
+        plan_lane = self.plan_revision.room_plans[0].lane_id
+        if any(block.lane_id != plan_lane for block in self.ledger.blocks):
+            raise ValueError("plan lane does not match ledger lane")

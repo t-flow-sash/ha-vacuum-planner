@@ -14,6 +14,7 @@ from .models import (
     JobState,
     JsonValue,
     Mode,
+    PlannerState,
     PlanRevision,
     PlanSnapshot,
     PreferredMode,
@@ -389,4 +390,27 @@ def deserialize_ledger(payload: Payload) -> QueueLedger:
         ),
         active_block_id=_optional_string(data.get("active_block_id"), "active_block_id"),
         last_reconciled_at=_dt(data.get("last_reconciled_at")),
+    )
+
+
+def serialize_planner_state(state: PlannerState) -> Payload:
+    """Serialize the plan and ledger as one atomic persistence value."""
+    return _envelope(
+        "planner_state",
+        {
+            "plan_revision": serialize_plan_revision(state.plan_revision),
+            "ledger": serialize_ledger(state.ledger),
+        },
+    )
+
+
+def deserialize_planner_state(payload: Payload) -> PlannerState:
+    """Deserialize the complete persisted planner root."""
+    data = _data(payload, "planner_state")
+    for required in ("plan_revision", "ledger"):
+        if required not in data:
+            raise ValueError(f"missing {required}")
+    return PlannerState(
+        deserialize_plan_revision(_object(data["plan_revision"], "plan_revision")),
+        deserialize_ledger(_object(data["ledger"], "ledger")),
     )
