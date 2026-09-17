@@ -4,6 +4,7 @@
       "already_configured": "Dieser Saugroboter ist bereits konfiguriert."
     },
     "error": {
+      "clean_area_unsupported": "Der ausgewählte Saugroboter unterstützt in Home Assistant keine native Raumreinigung.",
       "entity_not_found": "Die ausgewählte Saugroboter-Entität ist nicht mehr vorhanden."
     },
     "step": {

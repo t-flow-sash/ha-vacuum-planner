@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
+from homeassistant.components.vacuum import VacuumEntityFeature
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
@@ -24,21 +26,27 @@ class VacuumPlannerConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-a
         errors: dict[str, str] = {}
         if user_input is not None:
             vacuum_entity_id = user_input[CONF_VACUUM_ENTITY_ID]
+            state = self.hass.states.get(vacuum_entity_id)
             registry_entry = er.async_get(self.hass).async_get(vacuum_entity_id)
-            if (
-                self.hass.states.get(vacuum_entity_id) is None
-                or registry_entry is None
-            ):
+            if state is None or registry_entry is None:
                 errors[CONF_VACUUM_ENTITY_ID] = "entity_not_found"
             else:
-                await self.async_set_unique_id(registry_entry.id)
-                self._abort_if_unique_id_configured(
-                    updates={CONF_VACUUM_ENTITY_ID: vacuum_entity_id}
-                )
-                return self.async_create_entry(
-                    title=vacuum_entity_id,
-                    data={CONF_VACUUM_ENTITY_ID: vacuum_entity_id},
-                )
+                supported_features = state.attributes.get(ATTR_SUPPORTED_FEATURES)
+                if (
+                    type(supported_features) is not int
+                    or supported_features < 0
+                    or not supported_features & int(VacuumEntityFeature.CLEAN_AREA)
+                ):
+                    errors[CONF_VACUUM_ENTITY_ID] = "clean_area_unsupported"
+                else:
+                    await self.async_set_unique_id(registry_entry.id)
+                    self._abort_if_unique_id_configured(
+                        updates={CONF_VACUUM_ENTITY_ID: vacuum_entity_id}
+                    )
+                    return self.async_create_entry(
+                        title=vacuum_entity_id,
+                        data={CONF_VACUUM_ENTITY_ID: vacuum_entity_id},
+                    )
 
         return self.async_show_form(
             step_id="user",

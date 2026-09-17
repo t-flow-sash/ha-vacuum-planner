@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import sys
+from enum import IntFlag
 from types import ModuleType, SimpleNamespace
 from typing import Any, ClassVar
 
@@ -11,6 +12,13 @@ from custom_components.vacuum_planner.const import CONF_VACUUM_ENTITY_ID, DOMAIN
 
 class AbortFlowError(Exception):
     """Minimal equivalent of HA's data-entry-flow abort signal."""
+
+
+class StubVacuumEntityFeature(IntFlag):
+    CLEAN_AREA = 16384
+
+
+MISSING_SUPPORTED_FEATURES = object()
 
 
 class StubConfigFlow:
@@ -70,9 +78,14 @@ class StubEntityRegistry:
 
 def import_config_flow() -> ModuleType:
     homeassistant = ModuleType("homeassistant")
+    components = ModuleType("homeassistant.components")
+    vacuum = ModuleType("homeassistant.components.vacuum")
     config_entries = ModuleType("homeassistant.config_entries")
+    const = ModuleType("homeassistant.const")
+    vars(vacuum)["VacuumEntityFeature"] = StubVacuumEntityFeature
     vars(config_entries)["ConfigFlow"] = StubConfigFlow
     vars(config_entries)["ConfigFlowResult"] = dict[str, object]
+    vars(const)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     helpers = ModuleType("homeassistant.helpers")
     entity_registry = ModuleType("homeassistant.helpers.entity_registry")
     selector = ModuleType("homeassistant.helpers.selector")
@@ -80,13 +93,19 @@ def import_config_flow() -> ModuleType:
     vars(selector)["EntitySelector"] = StubEntitySelector
     vars(selector)["EntitySelectorConfig"] = StubEntitySelectorConfig
     vars(homeassistant)["config_entries"] = config_entries
+    vars(homeassistant)["components"] = components
+    vars(homeassistant)["const"] = const
+    vars(components)["vacuum"] = vacuum
     vars(homeassistant)["helpers"] = helpers
     vars(helpers)["entity_registry"] = entity_registry
     vars(helpers)["selector"] = selector
     sys.modules.update(
         {
             "homeassistant": homeassistant,
+            "homeassistant.components": components,
+            "homeassistant.components.vacuum": vacuum,
             "homeassistant.config_entries": config_entries,
+            "homeassistant.const": const,
             "homeassistant.helpers": helpers,
             "homeassistant.helpers.entity_registry": entity_registry,
             "homeassistant.helpers.selector": selector,
@@ -97,11 +116,24 @@ def import_config_flow() -> ModuleType:
 
 
 def configured_flow(
-    *, entity_exists: bool, registry_id: str | None = "vacuum-registry-entry"
+    *,
+    entity_exists: bool,
+    registry_id: str | None = "vacuum-registry-entry",
+    supported_features: object = int(StubVacuumEntityFeature.CLEAN_AREA),
 ) -> Any:
     module = import_config_flow()
     flow = module.VacuumPlannerConfigFlow()
-    state = object() if entity_exists else None
+    state = (
+        SimpleNamespace(
+            attributes=(
+                {}
+                if supported_features is MISSING_SUPPORTED_FEATURES
+                else {"supported_features": supported_features}
+            )
+        )
+        if entity_exists
+        else None
+    )
     flow.hass = SimpleNamespace(
         states=SimpleNamespace(get=lambda _entity_id: state),
         entity_registry=StubEntityRegistry(registry_id),
@@ -138,8 +170,66 @@ def test_user_step_creates_entry_identified_by_existing_vacuum_entity() -> None:
     assert flow.unique_id == "vacuum-registry-entry"
 
 
+def test_user_step_accepts_clean_area_combined_with_other_features() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        supported_features=int(StubVacuumEntityFeature.CLEAN_AREA) | 8192,
+    )
+
+    result = asyncio.run(
+        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
+    )
+
+    assert result["type"] == "create_entry"
+    assert flow.unique_id == "vacuum-registry-entry"
+
+
+@pytest.mark.parametrize(
+    "supported_features",
+    [0, None, 8192, MISSING_SUPPORTED_FEATURES],
+)
+def test_user_step_rejects_vacuum_without_native_area_cleaning(
+    supported_features: object,
+) -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        supported_features=supported_features,
+    )
+
+    result = asyncio.run(
+        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
+    )
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "user"
+    assert result["errors"] == {
+        CONF_VACUUM_ENTITY_ID: "clean_area_unsupported"
+    }
+    assert flow.unique_id is None
+
+
+def test_user_step_rejects_malformed_supported_features_fail_closed() -> None:
+    malformed_values = ("16384", 16384.0, True, -1, "not-an-int", object())
+
+    for supported_features in malformed_values:
+        flow = configured_flow(
+            entity_exists=True,
+            supported_features=supported_features,
+        )
+
+        result = asyncio.run(
+            flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
+        )
+
+        assert result["type"] == "form"
+        assert result["errors"] == {
+            CONF_VACUUM_ENTITY_ID: "clean_area_unsupported"
+        }
+        assert flow.unique_id is None
+
+
 def test_user_step_rejects_an_entity_that_no_longer_exists() -> None:
-    flow = configured_flow(entity_exists=False)
+    flow = configured_flow(entity_exists=False, supported_features="not-an-int")
 
     result = asyncio.run(
         flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.missing"})

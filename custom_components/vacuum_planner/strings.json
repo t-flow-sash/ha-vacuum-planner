@@ -4,6 +4,7 @@
       "already_configured": "This vacuum is already configured."
     },
     "error": {
+      "clean_area_unsupported": "The selected vacuum does not provide native area cleaning in Home Assistant.",
       "entity_not_found": "The selected vacuum entity no longer exists."
     },
     "step": {
