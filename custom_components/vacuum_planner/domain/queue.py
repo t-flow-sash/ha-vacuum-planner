@@ -14,6 +14,7 @@ from .models import (
     DispatchStrategy,
     JobState,
     Mode,
+    PlanRevision,
     PlanSnapshot,
     QueueBlock,
     QueueJob,
@@ -105,9 +106,62 @@ class EnqueueResult:
     job: QueueJob
 
 
+@dataclass(frozen=True, slots=True)
+class CompletionResult:
+    """Atomic domain result of completing work and advancing its plan."""
+
+    ledger: QueueLedger
+    plan_revision: PlanRevision
+
+
 def _jobs_for_block(ledger: QueueLedger, block: QueueBlock) -> tuple[QueueJob, ...]:
     by_id = {job.job_id: job for job in ledger.jobs}
     return tuple(by_id[job_id] for job_id in block.job_ids)
+
+
+def _latest_completion(current: datetime | None, completed_at: datetime) -> datetime:
+    return completed_at if current is None else max(current, completed_at)
+
+
+def complete_job_and_advance_plan(
+    ledger: QueueLedger,
+    current_plan: PlanRevision,
+    job_id: str,
+    completed_at: datetime,
+    next_revision_id: str,
+) -> CompletionResult:
+    """Complete one running job and advance its room's completion timestamp."""
+    job = next((item for item in ledger.jobs if item.job_id == job_id), None)
+    if job is None:
+        raise KeyError(job_id)
+    parent = next(block for block in ledger.blocks if block.block_id == job.block_id)
+    if current_plan.room_plans and current_plan.room_plans[0].lane_id != parent.lane_id:
+        raise ValueError("plan lane does not match job lane")
+    completed_ledger = ledger.replace_job_state(job_id, JobState.COMPLETED, completed_at)
+    if not any(room.area_id == job.area_id for room in current_plan.room_plans):
+        return CompletionResult(completed_ledger, current_plan)
+    room_plans = tuple(
+        replace(
+            room,
+            last_completed_vacuum_at=_latest_completion(
+                room.last_completed_vacuum_at, completed_at
+            ),
+            last_completed_vacuum_and_mop_at=(
+                _latest_completion(room.last_completed_vacuum_and_mop_at, completed_at)
+                if job.mode is Mode.VACUUM_AND_MOP
+                else room.last_completed_vacuum_and_mop_at
+            ),
+        )
+        if room.area_id == job.area_id
+        else room
+        for room in current_plan.room_plans
+    )
+    if room_plans != current_plan.room_plans and next_revision_id == current_plan.revision_id:
+        raise ValueError("next revision ID must differ when room plan changes")
+    advanced_plan = PlanRevision(
+        next_revision_id, max(current_plan.created_at, completed_at), room_plans
+    )
+    return CompletionResult(completed_ledger, advanced_plan)
 
 
 def start_due_block(
