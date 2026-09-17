@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
+from uuid import uuid4
 
 from .const import CONF_VACUUM_ENTITY_ID, DOMAIN, VacuumPlannerRuntimeData
+from .coordinator import PlannerCoordinator
+from .domain.models import PlannerState, PlanRevision, QueueLedger
 from .store import PlannerStore, StoreBackend
 
 if TYPE_CHECKING:
@@ -65,6 +69,7 @@ async def async_setup_entry(
                 )
     planner_store = None
     planner_state = None
+    coordinator = None
     if entry_id := getattr(entry, "entry_id", None):
         storage = cast(
             "_StorageModule",
@@ -80,18 +85,29 @@ async def async_setup_entry(
         )
         try:
             planner_state = await planner_store.async_load()
+            if planner_state is None:
+                planner_state = PlannerState(
+                    plan_revision=PlanRevision(
+                        revision_id=str(uuid4()),
+                        created_at=datetime.now(UTC),
+                        room_plans=(),
+                    ),
+                    ledger=QueueLedger.empty(),
+                )
+                await planner_store.async_save(planner_state)
+            coordinator = PlannerCoordinator(planner_state, planner_store)
         except OSError as err:
             exceptions = cast(
                 "_ExceptionsModule",
                 import_module("homeassistant.exceptions"),
             )
             raise exceptions.ConfigEntryNotReady(
-                "Unable to load stored Vacuum Planner state"
+                "Unable to load or initialize stored Vacuum Planner state"
             ) from err
     entry.runtime_data = VacuumPlannerRuntimeData(
         vacuum_entity_id=vacuum_entity_id,
         store=planner_store,
-        state=planner_state,
+        coordinator=coordinator,
     )
     return True
 

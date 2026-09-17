@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from .coordinator import PlannerCoordinator
     from .domain.models import PlannerState
     from .store import PlannerStore
 
@@ -20,4 +21,11 @@ class VacuumPlannerRuntimeData:
 
     vacuum_entity_id: str
     store: PlannerStore | None = None
-    state: PlannerState | None = None
+    coordinator: PlannerCoordinator | None = None
+
+    @property
+    def state(self) -> PlannerState | None:
+        """Return the current coordinator-owned planner state."""
+        if self.coordinator is None:
+            return None
+        return self.coordinator.state

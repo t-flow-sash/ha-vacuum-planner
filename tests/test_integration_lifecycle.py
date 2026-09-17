@@ -3,6 +3,7 @@ import sys
 from datetime import UTC, datetime
 from types import ModuleType, SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -17,7 +18,10 @@ from custom_components.vacuum_planner.domain.models import (
     PlanRevision,
     QueueLedger,
 )
-from custom_components.vacuum_planner.domain.serialization import serialize_planner_state
+from custom_components.vacuum_planner.domain.serialization import (
+    deserialize_planner_state,
+    serialize_planner_state,
+)
 
 
 def test_integration_constants_define_entry_identity() -> None:
@@ -129,11 +133,63 @@ def test_setup_loads_entry_specific_planner_state_from_atomic_ha_store(
 
     assert asyncio.run(async_setup_entry(hass, entry)) is True
     assert entry.runtime_data.state == expected
+    assert entry.runtime_data.coordinator is not None
+    assert entry.runtime_data.coordinator.state == expected
     assert constructed == [(hass, 1, "vacuum_planner.planner-entry-1", True)]
 
 
-def test_setup_retries_when_planner_store_load_has_transient_io_failure(
+def test_setup_initializes_and_persists_empty_authoritative_state(
     monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved: list[dict[str, Any]] = []
+
+    class EmptyHAStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def async_load(self) -> None:
+            return None
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            assert entry.runtime_data is None
+            saved.append(data)
+
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    vars(storage_module)["Store"] = EmptyHAStore
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(helpers_module)["storage"] = storage_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        unique_id=None,
+        runtime_data=None,
+    )
+    before_setup = datetime.now(UTC)
+
+    assert asyncio.run(async_setup_entry(SimpleNamespace(), entry)) is True
+    after_setup = datetime.now(UTC)
+
+    assert entry.runtime_data.coordinator is not None
+    assert len(saved) == 1
+    initial = deserialize_planner_state(saved[0])
+    assert entry.runtime_data.state == initial
+    assert initial.plan_revision.room_plans == ()
+    assert initial.ledger == QueueLedger.empty()
+    assert before_setup <= initial.plan_revision.created_at <= after_setup
+    assert initial.plan_revision.created_at.tzinfo is UTC
+    assert UUID(initial.plan_revision.revision_id).version == 4
+
+
+@pytest.mark.parametrize("failure_operation", ["load", "save"])
+def test_setup_retries_when_planner_store_has_transient_io_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_operation: str,
 ) -> None:
     class StubConfigEntryNotReadyError(Exception):
         pass
@@ -143,10 +199,14 @@ def test_setup_retries_when_planner_store_load_has_transient_io_failure(
             pass
 
         async def async_load(self) -> dict[str, Any] | None:
-            raise OSError("storage temporarily unavailable")
+            if failure_operation == "load":
+                raise OSError("storage temporarily unavailable")
+            return None
 
         async def async_save(self, _data: dict[str, Any]) -> None:
-            raise AssertionError("setup must not save state")
+            if failure_operation == "save":
+                raise OSError("storage temporarily unavailable")
+            raise AssertionError("setup must not save state after a load failure")
 
     homeassistant_module = ModuleType("homeassistant")
     helpers_module = ModuleType("homeassistant.helpers")
@@ -173,3 +233,4 @@ def test_setup_retries_when_planner_store_load_has_transient_io_failure(
         asyncio.run(async_setup_entry(SimpleNamespace(), entry))
 
     assert isinstance(raised.value.__cause__, OSError)
+    assert entry.runtime_data is None
