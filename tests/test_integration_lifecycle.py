@@ -1,6 +1,8 @@
 import asyncio
 import sys
+from datetime import UTC, datetime
 from types import ModuleType, SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -10,6 +12,12 @@ from custom_components.vacuum_planner.const import (
     DOMAIN,
     VacuumPlannerRuntimeData,
 )
+from custom_components.vacuum_planner.domain.models import (
+    PlannerState,
+    PlanRevision,
+    QueueLedger,
+)
+from custom_components.vacuum_planner.domain.serialization import serialize_planner_state
 
 
 def test_integration_constants_define_entry_identity() -> None:
@@ -69,3 +77,99 @@ def test_setup_resolves_current_entity_id_from_stable_registry_identity(
         vacuum_entity_id="vacuum.renamed"
     )
     assert updated == [{CONF_VACUUM_ENTITY_ID: "vacuum.renamed"}]
+
+
+def test_setup_loads_entry_specific_planner_state_from_atomic_ha_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = PlannerState(
+        plan_revision=PlanRevision(
+            revision_id="revision-1",
+            created_at=datetime(2026, 9, 17, 8, 0, tzinfo=UTC),
+            room_plans=(),
+        ),
+        ledger=QueueLedger.empty(),
+    )
+    constructed: list[tuple[object, int, str, bool]] = []
+
+    class FakeHAStore:
+        def __init__(
+            self,
+            hass: object,
+            version: int,
+            key: str,
+            *,
+            atomic_writes: bool = False,
+        ) -> None:
+            constructed.append((hass, version, key, atomic_writes))
+
+        async def async_load(self) -> dict[str, Any]:
+            return serialize_planner_state(expected)
+
+        async def async_save(self, _data: dict[str, Any]) -> None:
+            raise AssertionError("setup must not rewrite loaded state")
+
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    vars(storage_module)["Store"] = FakeHAStore
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(helpers_module)["storage"] = storage_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        unique_id=None,
+        runtime_data=None,
+    )
+
+    assert asyncio.run(async_setup_entry(hass, entry)) is True
+    assert entry.runtime_data.state == expected
+    assert constructed == [(hass, 1, "vacuum_planner.planner-entry-1", True)]
+
+
+def test_setup_retries_when_planner_store_load_has_transient_io_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubConfigEntryNotReadyError(Exception):
+        pass
+
+    class FailingHAStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def async_load(self) -> dict[str, Any] | None:
+            raise OSError("storage temporarily unavailable")
+
+        async def async_save(self, _data: dict[str, Any]) -> None:
+            raise AssertionError("setup must not save state")
+
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vars(storage_module)["Store"] = FailingHAStore
+    vars(exceptions_module)["ConfigEntryNotReady"] = StubConfigEntryNotReadyError
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(homeassistant_module)["exceptions"] = exceptions_module
+    vars(helpers_module)["storage"] = storage_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        unique_id=None,
+        runtime_data=None,
+    )
+
+    with pytest.raises(StubConfigEntryNotReadyError) as raised:
+        asyncio.run(async_setup_entry(SimpleNamespace(), entry))
+
+    assert isinstance(raised.value.__cause__, OSError)

@@ -5,7 +5,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 
-from .const import CONF_VACUUM_ENTITY_ID, VacuumPlannerRuntimeData
+from .const import CONF_VACUUM_ENTITY_ID, DOMAIN, VacuumPlannerRuntimeData
+from .store import PlannerStore, StoreBackend
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -22,6 +23,25 @@ class _EntityRegistry(Protocol):
 
 class _EntityRegistryModule(Protocol):
     def async_get(self, hass: HomeAssistant) -> _EntityRegistry: ...
+
+
+class _StoreFactory(Protocol):
+    def __call__(
+        self,
+        hass: HomeAssistant,
+        version: int,
+        key: str,
+        *,
+        atomic_writes: bool = False,
+    ) -> StoreBackend: ...
+
+
+class _StorageModule(Protocol):
+    Store: _StoreFactory
+
+
+class _ExceptionsModule(Protocol):
+    ConfigEntryNotReady: type[Exception]
 
 
 async def async_setup_entry(
@@ -43,8 +63,35 @@ async def async_setup_entry(
                     entry,
                     data={**entry.data, CONF_VACUUM_ENTITY_ID: vacuum_entity_id},
                 )
+    planner_store = None
+    planner_state = None
+    if entry_id := getattr(entry, "entry_id", None):
+        storage = cast(
+            "_StorageModule",
+            import_module("homeassistant.helpers.storage"),
+        )
+        planner_store = PlannerStore(
+            storage.Store(
+                hass,
+                1,
+                f"{DOMAIN}.{entry_id}",
+                atomic_writes=True,
+            )
+        )
+        try:
+            planner_state = await planner_store.async_load()
+        except OSError as err:
+            exceptions = cast(
+                "_ExceptionsModule",
+                import_module("homeassistant.exceptions"),
+            )
+            raise exceptions.ConfigEntryNotReady(
+                "Unable to load stored Vacuum Planner state"
+            ) from err
     entry.runtime_data = VacuumPlannerRuntimeData(
-        vacuum_entity_id=vacuum_entity_id
+        vacuum_entity_id=vacuum_entity_id,
+        store=planner_store,
+        state=planner_state,
     )
     return True
 
