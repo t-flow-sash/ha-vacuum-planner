@@ -117,6 +117,41 @@ def test_unknown_future_schema_is_rejected_instead_of_silently_reinterpreted() -
         deserialize_ledger(payload)
 
 
+def test_legacy_ledger_schema_is_migrated_for_restart() -> None:
+    expected = ledger()
+    payload = serialize_ledger(expected)
+    payload["schema_version"] = 0
+    payload["data"].pop("active_block_id")
+    payload["data"].pop("last_reconciled_at")
+    payload["data"]["blocks"][0].pop("completed_at")
+    payload["data"]["blocks"][0].pop("adapter_run_id")
+    payload["data"]["jobs"][0].pop("adapter_token")
+    payload["data"]["jobs"][0].pop("error_code")
+    payload["data"]["jobs"][0].pop("error_detail")
+
+    restored = deserialize_ledger(json.loads(json.dumps(payload)))
+
+    assert restored == expected
+
+
+def test_legacy_migration_does_not_reinterpret_another_payload_kind() -> None:
+    payload = serialize_ledger(ledger())
+    payload["schema_version"] = 0
+    payload["kind"] = "plan_revision"
+
+    with pytest.raises(ValueError, match="expected payload kind queue_ledger"):
+        deserialize_ledger(payload)
+
+
+@pytest.mark.parametrize("invalid_version", [False, 0.0])
+def test_legacy_migration_requires_an_integer_schema_version(invalid_version: object) -> None:
+    payload = serialize_ledger(ledger())
+    payload["schema_version"] = invalid_version
+
+    with pytest.raises(SchemaVersionError, match="unsupported schema version"):
+        deserialize_ledger(payload)
+
+
 def test_corrupt_enum_and_references_are_rejected() -> None:
     payload = serialize_ledger(ledger())
     payload["data"]["blocks"][0]["state"] = "invented"

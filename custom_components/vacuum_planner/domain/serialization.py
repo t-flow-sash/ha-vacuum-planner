@@ -337,9 +337,46 @@ def serialize_ledger(ledger: QueueLedger) -> Payload:
     )
 
 
+def _migrate_ledger_payload(payload: Payload) -> Payload:
+    """Upgrade supported legacy ledger payloads without mutating stored input."""
+    version = payload.get("schema_version")
+    if type(version) is not int or version != 0:
+        return payload
+    if payload.get("kind") != "queue_ledger":
+        raise ValueError("expected payload kind queue_ledger")
+    data = _object(payload.get("data"), "payload data")
+    blocks = [
+        {
+            **_object(item, "block"),
+            "completed_at": _object(item, "block").get("completed_at"),
+            "adapter_run_id": _object(item, "block").get("adapter_run_id"),
+        }
+        for item in _array(data.get("blocks"), "blocks")
+    ]
+    jobs = [
+        {
+            **_object(item, "job"),
+            "adapter_token": _object(item, "job").get("adapter_token"),
+            "error_code": _object(item, "job").get("error_code"),
+            "error_detail": _object(item, "job").get("error_detail"),
+        }
+        for item in _array(data.get("jobs"), "jobs")
+    ]
+    return _envelope(
+        "queue_ledger",
+        {
+            **data,
+            "blocks": blocks,
+            "jobs": jobs,
+            "active_block_id": data.get("active_block_id"),
+            "last_reconciled_at": data.get("last_reconciled_at"),
+        },
+    )
+
+
 def deserialize_ledger(payload: Payload) -> QueueLedger:
     """Deserialize and fully revalidate an authoritative queue ledger."""
-    data = _data(payload, "queue_ledger")
+    data = _data(_migrate_ledger_payload(payload), "queue_ledger")
     return QueueLedger(
         schema_version=SCHEMA_VERSION,
         revision=_integer(data["revision"], "revision"),
