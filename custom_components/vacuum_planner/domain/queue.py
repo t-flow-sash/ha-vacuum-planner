@@ -138,6 +138,25 @@ def complete_job_and_advance_plan(
     if current_plan.room_plans and current_plan.room_plans[0].lane_id != parent.lane_id:
         raise ValueError("plan lane does not match job lane")
     completed_ledger = ledger.replace_job_state(job_id, JobState.COMPLETED, completed_at)
+    block_jobs = tuple(
+        item for item in completed_ledger.jobs if item.block_id == parent.block_id
+    )
+    if all(item.state in _TERMINAL_JOB_STATES for item in block_jobs):
+        block_completed_at = max(
+            item.finished_at for item in block_jobs if item.finished_at is not None
+        )
+        final_state = (
+            BlockState.COMPLETED
+            if all(item.state is JobState.COMPLETED for item in block_jobs)
+            else BlockState.PARTIAL
+        )
+        if parent.state is BlockState.COMMITTED:
+            completed_ledger = completed_ledger.replace_block_state(
+                parent.block_id, BlockState.RUNNING, block_completed_at
+            )
+        completed_ledger = completed_ledger.replace_block_state(
+            parent.block_id, final_state, block_completed_at
+        )
     if not any(room.area_id == job.area_id for room in current_plan.room_plans):
         return CompletionResult(completed_ledger, current_plan)
     room_plans = tuple(

@@ -592,7 +592,7 @@ class QueueLedger:
                 committed_at=changed_at,
                 adapter_run_id=adapter_run_id or current.adapter_run_id,
             )
-        elif new_state is BlockState.COMPLETED:
+        elif new_state in {BlockState.COMPLETED, BlockState.PARTIAL}:
             changed = replace(current, state=new_state, completed_at=changed_at)
         else:
             changed = replace(current, state=new_state)

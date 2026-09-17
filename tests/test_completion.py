@@ -30,7 +30,9 @@ class IDs:
         return f"id-{self.index}"
 
 
-def running_job(mode: Mode) -> tuple[QueueLedger, PlanRevision]:
+def running_job(
+    mode: Mode, *, parent_running: bool = True
+) -> tuple[QueueLedger, PlanRevision]:
     preferred_mode = (
         PreferredMode.VACUUM if mode is Mode.VACUUM else PreferredMode.VACUUM_AND_MOP
     )
@@ -66,8 +68,10 @@ def running_job(mode: Mode) -> tuple[QueueLedger, PlanRevision]:
         DispatchStrategy.PLANNER_SEQUENTIAL,
         BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
-    for block_state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
+    for block_state in (BlockState.COMMITTING, BlockState.COMMITTED):
         ledger = ledger.replace_block_state("id-1", block_state, NOW)
+    if parent_running:
+        ledger = ledger.replace_block_state("id-1", BlockState.RUNNING, NOW)
     for job_state in (JobState.DISPATCHING, JobState.ACCEPTED, JobState.RUNNING):
         ledger = ledger.replace_job_state("id-2", job_state, NOW)
     return ledger, revision
@@ -102,6 +106,88 @@ def test_completed_vacuum_advances_plan_and_clears_immediate_due_work() -> None:
         ).jobs
         == ()
     )
+
+
+def test_completing_final_job_atomically_completes_parent_block() -> None:
+    ledger, revision = running_job(Mode.VACUUM)
+
+    result = queue_commands.complete_job_and_advance_plan(
+        ledger,
+        revision,
+        "id-2",
+        NOW,
+        "rev-2",
+    )
+
+    assert result.ledger.blocks[0].state is BlockState.COMPLETED
+    assert result.ledger.blocks[0].completed_at == NOW
+
+
+def test_completing_job_finalizes_parent_that_has_not_observed_running() -> None:
+    ledger, revision = running_job(Mode.VACUUM, parent_running=False)
+
+    result = queue_commands.complete_job_and_advance_plan(
+        ledger,
+        revision,
+        "id-2",
+        NOW,
+        "rev-2",
+    )
+
+    assert result.ledger.blocks[0].state is BlockState.COMPLETED
+
+
+def test_completing_last_active_job_marks_mixed_outcomes_partial() -> None:
+    rooms = tuple(
+        RoomPlan(
+            area_id=area_id,
+            lane_id="lane",
+            enabled=True,
+            vacuum_interval_days=2,
+            vacuum_and_mop_interval_days=None,
+            preferred_mode=PreferredMode.VACUUM,
+            priority=0,
+        )
+        for area_id in ("kitchen", "hall")
+    )
+    revision = PlanRevision("rev-1", NOW - timedelta(days=1), rooms)
+    snapshot = build_due_snapshot(
+        revision,
+        {
+            area_id: AreaBinding(area_id, area_id.title(), index, False)
+            for index, area_id in enumerate(("kitchen", "hall"), start=1)
+        },
+        NOW,
+    )
+    ledger = start_due_block(
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+    for block_state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
+        ledger = ledger.replace_block_state("id-1", block_state, NOW)
+    for job_state in (JobState.DISPATCHING, JobState.ACCEPTED, JobState.RUNNING):
+        ledger = ledger.replace_job_state("id-2", job_state, NOW)
+    later_failure = NOW + timedelta(hours=1)
+    ledger = ledger.replace_job_state("id-2", JobState.FAILED, later_failure)
+    for job_state in (JobState.DISPATCHING, JobState.ACCEPTED, JobState.RUNNING):
+        ledger = ledger.replace_job_state("id-3", job_state, NOW)
+
+    result = queue_commands.complete_job_and_advance_plan(
+        ledger,
+        revision,
+        "id-3",
+        NOW,
+        "rev-2",
+    )
+
+    assert result.ledger.blocks[0].state is BlockState.PARTIAL
+    assert result.ledger.blocks[0].completed_at == later_failure
 
 
 def test_completed_vacuum_and_mop_advances_both_completion_timestamps() -> None:
