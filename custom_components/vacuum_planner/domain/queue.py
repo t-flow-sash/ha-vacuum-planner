@@ -86,6 +86,10 @@ class LaneAlreadyOpenError(ValueError):
     """A lane cannot accept a second open block."""
 
 
+class RevisionConflictError(ValueError):
+    """A command was based on a stale queue revision."""
+
+
 @dataclass(frozen=True, slots=True)
 class StartResult:
     """Immutable result of ``start_due_block``."""
@@ -194,17 +198,9 @@ def start_due_block(
     guarantee: BlockGuarantee,
     *,
     atomic_device_commit: bool = False,
+    expected_revision: int | None = None,
 ) -> StartResult:
     """Seal all snapshot jobs or none, deduplicating an open start command."""
-    if snapshot.lane_id != lane_id:
-        raise ValueError("snapshot lane does not match requested lane")
-    if (
-        guarantee is BlockGuarantee.ROBOT_ATOMIC
-        and dispatch_strategy is not DispatchStrategy.DEVICE_QUEUE
-    ):
-        raise ValueError("robot_atomic requires device_queue")
-    if guarantee is BlockGuarantee.ROBOT_ATOMIC and not atomic_device_commit:
-        raise ValueError("robot_atomic requires atomic device commit proof")
     for block in ledger.blocks:
         if (
             block.lane_id == lane_id
@@ -214,8 +210,24 @@ def start_due_block(
             return StartResult(
                 StartStatus.EXISTING, ledger, block, _jobs_for_block(ledger, block)
             )
-        if block.lane_id == lane_id and block.state not in _TERMINAL_BLOCK_STATES:
-            raise LaneAlreadyOpenError("lane already has an open block")
+    if snapshot.lane_id != lane_id:
+        raise ValueError("snapshot lane does not match requested lane")
+    if (
+        guarantee is BlockGuarantee.ROBOT_ATOMIC
+        and dispatch_strategy is not DispatchStrategy.DEVICE_QUEUE
+    ):
+        raise ValueError("robot_atomic requires device_queue")
+    if guarantee is BlockGuarantee.ROBOT_ATOMIC and not atomic_device_commit:
+        raise ValueError("robot_atomic requires atomic device commit proof")
+    if expected_revision is not None and ledger.revision != expected_revision:
+        raise RevisionConflictError(
+            f"expected revision {expected_revision}, found {ledger.revision}"
+        )
+    if any(
+        block.lane_id == lane_id and block.state not in _TERMINAL_BLOCK_STATES
+        for block in ledger.blocks
+    ):
+        raise LaneAlreadyOpenError("lane already has an open block")
     if not snapshot.jobs:
         return StartResult(StartStatus.NO_WORK, ledger, None, ())
 

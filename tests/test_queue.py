@@ -20,6 +20,7 @@ from custom_components.vacuum_planner.domain.queue import (
     EnqueueStatus,
     LaneAlreadyOpenError,
     QueueBusyError,
+    RevisionConflictError,
     StartStatus,
     enqueue_area,
     start_due_block,
@@ -75,6 +76,21 @@ def test_start_rejects_a_snapshot_bound_to_a_different_lane() -> None:
         )
 
     assert ledger == QueueLedger.empty()
+
+
+def test_start_rejects_stale_revision_before_allocating_ids() -> None:
+    ledger = QueueLedger(schema_version=1, revision=1, blocks=(), jobs=())
+    ids = IDs("must-not-be-used")
+
+    with pytest.raises(RevisionConflictError, match="expected revision 0, found 1"):
+        start_due_block(
+            ledger, snapshot("kitchen"), "lane", "today", NOW, ids,
+            DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+            expected_revision=0,
+        )
+
+    assert ids.calls == 0
+    assert ledger.blocks == ()
 
 
 def test_start_atomically_seals_the_complete_ordered_snapshot() -> None:
@@ -140,17 +156,25 @@ def test_failed_adapter_commit_atomically_fails_block_and_unsent_jobs() -> None:
     assert failed.revision == committing.revision + 1
 
 
-def test_repeated_start_returns_same_open_block_without_allocating_ids() -> None:
+def test_repeated_start_returns_same_open_block_despite_stale_revision() -> None:
     first_ids = IDs("block-1", "job-1")
     first = start_due_block(
         QueueLedger.empty(), snapshot("kitchen"), "lane", "today", NOW, first_ids,
         DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        expected_revision=0,
     )
     second_ids = IDs("must-not-be-used")
 
+    invalid_retry_snapshot = PlanSnapshot(
+        "different-revision",
+        "other-lane",
+        NOW,
+        (),
+    )
     second = start_due_block(
-        first.ledger, snapshot("different"), "lane", "today", NOW, second_ids,
+        first.ledger, invalid_retry_snapshot, "lane", "today", NOW, second_ids,
         DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        expected_revision=0,
     )
 
     assert second.status is StartStatus.EXISTING
