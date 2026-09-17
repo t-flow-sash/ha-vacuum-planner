@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
@@ -10,6 +11,7 @@ from uuid import uuid4
 from .const import CONF_VACUUM_ENTITY_ID, DOMAIN, VacuumPlannerRuntimeData
 from .coordinator import PlannerCoordinator
 from .domain.models import PlannerState, PlanRevision, QueueLedger
+from .domain.queue import quarantine_ambiguous_dispatches
 from .store import PlannerStore, StoreBackend
 
 if TYPE_CHECKING:
@@ -95,6 +97,16 @@ async def async_setup_entry(
                     ledger=QueueLedger.empty(),
                 )
                 await planner_store.async_save(planner_state)
+            else:
+                recovered_ledger = quarantine_ambiguous_dispatches(
+                    planner_state.ledger, datetime.now(UTC)
+                )
+                if (
+                    recovered_ledger.blocks != planner_state.ledger.blocks
+                    or recovered_ledger.jobs != planner_state.ledger.jobs
+                ):
+                    planner_state = replace(planner_state, ledger=recovered_ledger)
+                    await planner_store.async_save(planner_state)
             coordinator = PlannerCoordinator(planner_state, planner_store)
         except OSError as err:
             exceptions = cast(

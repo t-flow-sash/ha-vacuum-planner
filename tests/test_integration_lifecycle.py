@@ -14,10 +14,18 @@ from custom_components.vacuum_planner.const import (
     VacuumPlannerRuntimeData,
 )
 from custom_components.vacuum_planner.domain.models import (
+    BlockGuarantee,
+    BlockState,
+    DispatchStrategy,
+    JobState,
+    Mode,
     PlannerState,
     PlanRevision,
+    PlanSnapshot,
     QueueLedger,
+    SnapshotJob,
 )
+from custom_components.vacuum_planner.domain.queue import start_due_block
 from custom_components.vacuum_planner.domain.serialization import (
     deserialize_planner_state,
     serialize_planner_state,
@@ -184,6 +192,75 @@ def test_setup_initializes_and_persists_empty_authoritative_state(
     assert before_setup <= initial.plan_revision.created_at <= after_setup
     assert initial.plan_revision.created_at.tzinfo is UTC
     assert UUID(initial.plan_revision.revision_id).version == 4
+
+
+def test_setup_quarantines_and_persists_ambiguous_dispatch_before_runtime_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime(2026, 9, 17, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    ledger = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            started_at,
+            (SnapshotJob("kitchen", "Kitchen", 7, Mode.VACUUM, 1, started_at),),
+        ),
+        "lane-1",
+        "2026-09-17",
+        started_at,
+        lambda: next(ids),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+    for state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
+        ledger = ledger.replace_block_state("block-1", state, started_at)
+    ledger = ledger.replace_job_state("job-1", JobState.DISPATCHING, started_at)
+    loaded = PlannerState(
+        PlanRevision("revision-1", started_at, ()),
+        ledger,
+    )
+    saved: list[dict[str, Any]] = []
+
+    class FakeHAStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def async_load(self) -> dict[str, Any]:
+            return serialize_planner_state(loaded)
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            assert entry.runtime_data is None
+            saved.append(data)
+
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    vars(storage_module)["Store"] = FakeHAStore
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(helpers_module)["storage"] = storage_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        unique_id=None,
+        runtime_data=None,
+    )
+
+    assert asyncio.run(async_setup_entry(SimpleNamespace(), entry)) is True
+
+    assert len(saved) == 1
+    recovered = deserialize_planner_state(saved[0])
+    assert recovered.ledger.blocks[0].state is BlockState.UNCERTAIN
+    assert recovered.ledger.blocks[0].completed_at is None
+    assert recovered.ledger.jobs[0].state is JobState.UNCERTAIN
+    assert recovered.ledger.jobs[0].finished_at is None
+    assert recovered.ledger.revision == loaded.ledger.revision + 1
+    assert entry.runtime_data.state == recovered
 
 
 @pytest.mark.parametrize("failure_operation", ["load", "save"])
