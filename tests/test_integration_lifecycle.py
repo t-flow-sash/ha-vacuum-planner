@@ -9,6 +9,7 @@ import pytest
 
 from custom_components.vacuum_planner import async_setup_entry, async_unload_entry
 from custom_components.vacuum_planner.const import (
+    CONF_AREA_IDS,
     CONF_PLANNING_ENABLED,
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
@@ -23,6 +24,7 @@ from custom_components.vacuum_planner.domain.models import (
     PlannerState,
     PlanRevision,
     PlanSnapshot,
+    PreferredMode,
     QueueLedger,
     SnapshotJob,
 )
@@ -164,7 +166,7 @@ def test_setup_loads_entry_specific_planner_state_from_atomic_ha_store(
     assert constructed == [(hass, 1, "vacuum_planner.planner-entry-1", True)]
 
 
-def test_setup_initializes_and_persists_empty_authoritative_state(
+def test_setup_initializes_and_persists_room_plans_for_configured_ha_areas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     saved: list[dict[str, Any]] = []
@@ -192,7 +194,10 @@ def test_setup_initializes_and_persists_empty_authoritative_state(
 
     entry = SimpleNamespace(
         entry_id="planner-entry-1",
-        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        data={
+            CONF_VACUUM_ENTITY_ID: "vacuum.downstairs",
+            CONF_AREA_IDS: ["hallway", "kitchen"],
+        },
         options={},
         unique_id=None,
         runtime_data=None,
@@ -206,7 +211,18 @@ def test_setup_initializes_and_persists_empty_authoritative_state(
     assert len(saved) == 1
     initial = deserialize_planner_state(saved[0])
     assert entry.runtime_data.state == initial
-    assert initial.plan_revision.room_plans == ()
+    assert [plan.area_id for plan in initial.plan_revision.room_plans] == [
+        "hallway",
+        "kitchen",
+    ]
+    assert all(
+        plan.lane_id == "planner-entry-1"
+        and plan.enabled
+        and plan.vacuum_interval_days == 7
+        and plan.vacuum_and_mop_interval_days is None
+        and plan.preferred_mode is PreferredMode.VACUUM
+        for plan in initial.plan_revision.room_plans
+    )
     assert initial.ledger == QueueLedger.empty()
     assert before_setup <= initial.plan_revision.created_at <= after_setup
     assert initial.plan_revision.created_at.tzinfo is UTC

@@ -9,13 +9,14 @@ from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
 from .const import (
+    CONF_AREA_IDS,
     CONF_PLANNING_ENABLED,
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
     VacuumPlannerRuntimeData,
 )
 from .coordinator import PlannerCoordinator
-from .domain.models import PlannerState, PlanRevision, QueueLedger
+from .domain.models import PlannerState, PlanRevision, PreferredMode, QueueLedger, RoomPlan
 from .domain.queue import quarantine_ambiguous_dispatches
 from .store import PlannerStore, StoreBackend
 
@@ -93,11 +94,23 @@ async def async_setup_entry(
         try:
             planner_state = await planner_store.async_load()
             if planner_state is None:
+                lane_id = entry.unique_id or entry_id
                 planner_state = PlannerState(
                     plan_revision=PlanRevision(
                         revision_id=str(uuid4()),
                         created_at=datetime.now(UTC),
-                        room_plans=(),
+                        room_plans=tuple(
+                            RoomPlan(
+                                area_id=area_id,
+                                lane_id=lane_id,
+                                enabled=True,
+                                vacuum_interval_days=7,
+                                vacuum_and_mop_interval_days=None,
+                                preferred_mode=PreferredMode.VACUUM,
+                                priority=0,
+                            )
+                            for area_id in entry.data.get(CONF_AREA_IDS, ())
+                        ),
                     ),
                     ledger=QueueLedger.empty(),
                 )
