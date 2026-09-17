@@ -32,9 +32,10 @@
     "step": {
       "init": {
         "data": {
+          "dry_run": "Testbetrieb (Saugroboter nicht steuern)",
           "planning_enabled": "Planungspräferenz aktiviert"
         },
-        "description": "Legt fest, ob künftige Planungspfade aktiviert sein sollen. Diese Beta führt keine automatische Planung aus und bleibt im Shadow-/Dry-Run-Modus.",
+        "description": "Konfiguriert das Planerverhalten. Der Testbetrieb ist standardmäßig aktiv und verhindert die Steuerung des Saugroboters.",
         "title": "Planerverhalten"
       }
     }

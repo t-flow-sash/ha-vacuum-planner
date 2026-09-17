@@ -72,6 +72,7 @@ def test_config_flow_has_complete_english_and_german_translations() -> None:
         "config.step.user.data.vacuum_entity_id",
         "config.step.user.description",
         "config.step.user.title",
+        "options.step.init.data.dry_run",
         "options.step.init.data.planning_enabled",
         "options.step.init.description",
         "options.step.init.title",

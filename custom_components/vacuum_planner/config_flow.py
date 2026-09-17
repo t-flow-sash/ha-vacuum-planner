@@ -7,15 +7,21 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.vacuum import VacuumEntityFeature
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlowWithReload
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .const import CONF_AREA_IDS, CONF_PLANNING_ENABLED, CONF_VACUUM_ENTITY_ID, DOMAIN
+from .const import (
+    CONF_AREA_IDS,
+    CONF_DRY_RUN,
+    CONF_PLANNING_ENABLED,
+    CONF_VACUUM_ENTITY_ID,
+    DOMAIN,
+)
 
 
-class VacuumPlannerOptionsFlow(OptionsFlow):  # type: ignore[misc]
+class VacuumPlannerOptionsFlow(OptionsFlowWithReload):  # type: ignore[misc]
     """Configure optional planner behavior without changing topology."""
 
     async def async_step_init(
@@ -31,7 +37,11 @@ class VacuumPlannerOptionsFlow(OptionsFlow):  # type: ignore[misc]
                     vol.Required(
                         CONF_PLANNING_ENABLED,
                         default=self.config_entry.options.get(CONF_PLANNING_ENABLED, True),
-                    ): bool
+                    ): bool,
+                    vol.Required(
+                        CONF_DRY_RUN,
+                        default=self.config_entry.options.get(CONF_DRY_RUN, True),
+                    ): bool,
                 }
             ),
         )

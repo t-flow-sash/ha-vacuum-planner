@@ -68,6 +68,12 @@ class StubOptionsFlow:
         return {"type": "create_entry", **result}
 
 
+class StubOptionsFlowWithReload(StubOptionsFlow):
+    """Mirror HA's marker class for options flows that trigger reloads."""
+
+    automatic_reload = True
+
+
 class StubEntitySelectorConfig(dict[str, object]):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(kwargs)
@@ -147,6 +153,7 @@ def import_config_flow() -> ModuleType:
     vars(config_entries)["ConfigFlow"] = StubConfigFlow
     vars(config_entries)["ConfigFlowResult"] = dict[str, object]
     vars(config_entries)["OptionsFlow"] = StubOptionsFlow
+    vars(config_entries)["OptionsFlowWithReload"] = StubOptionsFlowWithReload
     vars(const)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     helpers = ModuleType("homeassistant.helpers")
     entity_registry = ModuleType("homeassistant.helpers.entity_registry")
@@ -238,15 +245,43 @@ def test_options_flow_persists_planning_enabled_preference() -> None:
     form = asyncio.run(flow.async_step_init())
     planning_field = next(iter(form["data_schema"].schema))
     assert planning_field.schema == "planning_enabled"
-    assert form["data_schema"]({}) == {"planning_enabled": True}
+    assert form["data_schema"]({}) == {"planning_enabled": True, "dry_run": True}
 
-    result = asyncio.run(flow.async_step_init({"planning_enabled": False}))
+    result = asyncio.run(
+        flow.async_step_init({"planning_enabled": False, "dry_run": True})
+    )
 
     assert result == {
         "type": "create_entry",
         "title": "",
-        "data": {"planning_enabled": False},
+        "data": {"planning_enabled": False, "dry_run": True},
     }
+
+
+def test_options_flow_defaults_to_safe_dry_run() -> None:
+    module = import_config_flow()
+    flow = module.VacuumPlannerOptionsFlow()
+    flow.config_entry = SimpleNamespace(options={})
+
+    form = asyncio.run(flow.async_step_init())
+
+    assert form["data_schema"]({})["dry_run"] is True
+
+
+def test_options_flow_uses_ha_reload_contract_when_dry_run_changes() -> None:
+    module = import_config_flow()
+    flow = module.VacuumPlannerOptionsFlow()
+    flow.config_entry = SimpleNamespace(
+        options={"planning_enabled": True, "dry_run": False}
+    )
+
+    result = asyncio.run(
+        flow.async_step_init({"planning_enabled": True, "dry_run": True})
+    )
+
+    assert isinstance(flow, StubOptionsFlowWithReload)
+    assert flow.automatic_reload is True
+    assert result["data"]["dry_run"] is True
 
 
 def test_config_flow_exposes_options_flow_to_home_assistant() -> None:

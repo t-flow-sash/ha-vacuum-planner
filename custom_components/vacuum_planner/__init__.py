@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from .const import (
     CONF_AREA_IDS,
+    CONF_DRY_RUN,
     CONF_PLANNING_ENABLED,
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
@@ -137,6 +138,7 @@ async def async_setup_entry(
     entry.runtime_data = VacuumPlannerRuntimeData(
         vacuum_entity_id=vacuum_entity_id,
         planning_enabled=entry.options.get(CONF_PLANNING_ENABLED, True),
+        dry_run=entry.options.get(CONF_DRY_RUN, True),
         store=planner_store,
         coordinator=coordinator,
     )

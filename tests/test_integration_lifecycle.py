@@ -54,6 +54,7 @@ def test_setup_and_unload_manage_entry_runtime_data_without_platforms() -> None:
         vacuum_entity_id="vacuum.downstairs"
     )
     assert entry.runtime_data.planning_enabled is True
+    assert entry.runtime_data.dry_run is True
 
     assert asyncio.run(async_unload_entry(hass, entry)) is True
     assert entry.runtime_data is None

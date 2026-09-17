@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 DOMAIN = "vacuum_planner"
 CONF_VACUUM_ENTITY_ID = "vacuum_entity_id"
 CONF_AREA_IDS = "area_ids"
+CONF_DRY_RUN = "dry_run"
 CONF_PLANNING_ENABLED = "planning_enabled"
 DEFAULT_TITLE = "Vacuum Planner"
 
@@ -23,6 +24,7 @@ class VacuumPlannerRuntimeData:
 
     vacuum_entity_id: str
     planning_enabled: bool = True
+    dry_run: bool = True
     store: PlannerStore | None = None
     coordinator: PlannerCoordinator | None = None
 

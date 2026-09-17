@@ -32,9 +32,10 @@
     "step": {
       "init": {
         "data": {
+          "dry_run": "Dry run (do not control the vacuum)",
           "planning_enabled": "Planning preference enabled"
         },
-        "description": "Store whether future planning paths should be enabled. This beta does not run automatic planning and remains in shadow/dry-run mode.",
+        "description": "Configure planner behavior. Dry run is enabled by default and prevents control of the vacuum.",
         "title": "Planner behavior"
       }
     }
