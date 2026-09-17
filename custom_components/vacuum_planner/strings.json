@@ -1,0 +1,19 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "This vacuum is already configured."
+    },
+    "error": {
+      "entity_not_found": "The selected vacuum entity no longer exists."
+    },
+    "step": {
+      "user": {
+        "data": {
+          "vacuum_entity_id": "Vacuum"
+        },
+        "description": "Select the existing vacuum entity that Vacuum Planner should manage.",
+        "title": "Select a vacuum"
+      }
+    }
+  }
+}

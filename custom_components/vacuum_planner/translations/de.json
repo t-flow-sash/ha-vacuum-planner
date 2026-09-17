@@ -1,0 +1,19 @@
+{
+  "config": {
+    "abort": {
+      "already_configured": "Dieser Saugroboter ist bereits konfiguriert."
+    },
+    "error": {
+      "entity_not_found": "Die ausgewählte Saugroboter-Entität ist nicht mehr vorhanden."
+    },
+    "step": {
+      "user": {
+        "data": {
+          "vacuum_entity_id": "Saugroboter"
+        },
+        "description": "Wähle die vorhandene Saugroboter-Entität aus, die Vacuum Planner verwalten soll.",
+        "title": "Saugroboter auswählen"
+      }
+    }
+  }
+}

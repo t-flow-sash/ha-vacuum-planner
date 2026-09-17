@@ -1,0 +1,11 @@
+{
+  "codeowners": ["@t-flow-sash"],
+  "config_flow": true,
+  "documentation": "https://github.com/t-flow-sash/ha-vacuum-planner",
+  "domain": "vacuum_planner",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/t-flow-sash/ha-vacuum-planner/issues",
+  "name": "Vacuum Planner",
+  "version": "0.1.0"
+}
