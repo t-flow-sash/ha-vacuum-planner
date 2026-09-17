@@ -1,13 +1,24 @@
 {
   "config": {
     "abort": {
-      "already_configured": "Dieser Saugroboter ist bereits konfiguriert."
+      "already_configured": "Dieser Saugroboter ist bereits konfiguriert.",
+      "invalid_flow_state": "Der ausgewählte Saugroboter wurde während der Einrichtung geändert oder entfernt. Starte die Einrichtung erneut."
     },
     "error": {
+      "areas_duplicate": "Wähle jeden Bereich nur einmal aus.",
+      "areas_not_mapped": "Jeder ausgewählte Bereich muss diesem Saugroboter über mindestens ein Segment zugeordnet sein. Öffne die Raumzuordnung des Saugroboters, ergänze die fehlenden Zuordnungen und versuche es erneut.",
+      "areas_required": "Wähle mindestens einen Bereich aus.",
       "clean_area_unsupported": "Der ausgewählte Saugroboter unterstützt in Home Assistant keine native Raumreinigung.",
       "entity_not_found": "Die ausgewählte Saugroboter-Entität ist nicht mehr vorhanden."
     },
     "step": {
+      "areas": {
+        "data": {
+          "area_ids": "Bereiche"
+        },
+        "description": "Wähle die Home-Assistant-Bereiche für die Planung aus. Ihre Reihenfolge wird als stabile Standardreihenfolge verwendet. Jeder Bereich muss bereits durch die Saugroboter-Integration zugeordnet sein.",
+        "title": "Zugeordnete Bereiche auswählen"
+      },
       "user": {
         "data": {
           "vacuum_entity_id": "Saugroboter"

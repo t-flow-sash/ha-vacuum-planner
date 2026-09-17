@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 DOMAIN = "vacuum_planner"
 CONF_VACUUM_ENTITY_ID = "vacuum_entity_id"
+CONF_AREA_IDS = "area_ids"
 DEFAULT_TITLE = "Vacuum Planner"
 
 

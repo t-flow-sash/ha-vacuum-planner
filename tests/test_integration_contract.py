@@ -60,8 +60,15 @@ def test_config_flow_has_complete_english_and_german_translations() -> None:
 
     expected_keys = {
         "config.abort.already_configured",
+        "config.abort.invalid_flow_state",
+        "config.error.areas_duplicate",
+        "config.error.areas_not_mapped",
+        "config.error.areas_required",
         "config.error.clean_area_unsupported",
         "config.error.entity_not_found",
+        "config.step.areas.data.area_ids",
+        "config.step.areas.description",
+        "config.step.areas.title",
         "config.step.user.data.vacuum_entity_id",
         "config.step.user.description",
         "config.step.user.title",

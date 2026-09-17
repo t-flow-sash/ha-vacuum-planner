@@ -7,7 +7,11 @@ from typing import Any, ClassVar
 
 import pytest
 
-from custom_components.vacuum_planner.const import CONF_VACUUM_ENTITY_ID, DOMAIN
+from custom_components.vacuum_planner.const import (
+    CONF_AREA_IDS,
+    CONF_VACUUM_ENTITY_ID,
+    DOMAIN,
+)
 
 
 class AbortFlowError(Exception):
@@ -19,6 +23,7 @@ class StubVacuumEntityFeature(IntFlag):
 
 
 MISSING_SUPPORTED_FEATURES = object()
+REGISTRY_OPTIONS_FROM_AREA_MAPPING = object()
 
 
 class StubConfigFlow:
@@ -37,9 +42,7 @@ class StubConfigFlow:
     async def async_set_unique_id(self, unique_id: str) -> None:
         self.unique_id = unique_id
 
-    def _abort_if_unique_id_configured(
-        self, *, updates: dict[str, object] | None = None
-    ) -> None:
+    def _abort_if_unique_id_configured(self, *, updates: dict[str, object] | None = None) -> None:
         if self.unique_id in self.configured_unique_ids:
             self.abort_updates = updates
             raise AbortFlowError("already_configured")
@@ -49,6 +52,9 @@ class StubConfigFlow:
 
     def async_create_entry(self, **result: object) -> dict[str, object]:
         return {"type": "create_entry", **result}
+
+    def async_abort(self, **result: object) -> dict[str, object]:
+        return {"type": "abort", **result}
 
 
 class StubEntitySelectorConfig(dict[str, object]):
@@ -66,14 +72,58 @@ class StubEntitySelector:
         return value
 
 
-class StubEntityRegistry:
-    def __init__(self, registry_id: str | None) -> None:
-        self.registry_id = registry_id
+class StubAreaSelectorConfig(dict[str, object]):
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(kwargs)
 
-    def async_get(self, _entity_id: str) -> object | None:
-        if self.registry_id is None:
+
+class StubAreaSelector:
+    def __init__(self, config: StubAreaSelectorConfig) -> None:
+        self.config = config
+
+    def __call__(self, value: object) -> list[str]:
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError
+        return value
+
+
+class StubEntityRegistry:
+    def __init__(
+        self,
+        registry_id: str | None,
+        options: object,
+        entity_id: str,
+    ) -> None:
+        self.entry = (
+            None
+            if registry_id is None
+            else SimpleNamespace(
+                id=registry_id,
+                entity_id=entity_id,
+                options=options,
+            )
+        )
+
+    def async_get(self, entity_id_or_registry_id: str) -> object | None:
+        if self.entry is None:
             return None
-        return SimpleNamespace(id=self.registry_id)
+        if entity_id_or_registry_id not in (self.entry.id, self.entry.entity_id):
+            return None
+        return self.entry
+
+    def rename(self, entity_id: str) -> None:
+        assert self.entry is not None
+        self.entry.entity_id = entity_id
+
+    def remove(self) -> None:
+        self.entry = None
+
+    def replace(self, entity_id: str, options: object) -> None:
+        self.entry = SimpleNamespace(
+            id="replacement-registry-entry",
+            entity_id=entity_id,
+            options=options,
+        )
 
 
 def import_config_flow() -> ModuleType:
@@ -92,6 +142,8 @@ def import_config_flow() -> ModuleType:
     vars(entity_registry)["async_get"] = lambda hass: hass.entity_registry
     vars(selector)["EntitySelector"] = StubEntitySelector
     vars(selector)["EntitySelectorConfig"] = StubEntitySelectorConfig
+    vars(selector)["AreaSelector"] = StubAreaSelector
+    vars(selector)["AreaSelectorConfig"] = StubAreaSelectorConfig
     vars(homeassistant)["config_entries"] = config_entries
     vars(homeassistant)["components"] = components
     vars(homeassistant)["const"] = const
@@ -120,6 +172,9 @@ def configured_flow(
     entity_exists: bool,
     registry_id: str | None = "vacuum-registry-entry",
     supported_features: object = int(StubVacuumEntityFeature.CLEAN_AREA),
+    area_mapping: dict[str, list[str]] | None = None,
+    registry_options: object = REGISTRY_OPTIONS_FROM_AREA_MAPPING,
+    entity_id: str = "vacuum.downstairs",
 ) -> Any:
     module = import_config_flow()
     flow = module.VacuumPlannerConfigFlow()
@@ -136,7 +191,15 @@ def configured_flow(
     )
     flow.hass = SimpleNamespace(
         states=SimpleNamespace(get=lambda _entity_id: state),
-        entity_registry=StubEntityRegistry(registry_id),
+        entity_registry=StubEntityRegistry(
+            registry_id,
+            (
+                registry_options
+                if registry_options is not REGISTRY_OPTIONS_FROM_AREA_MAPPING
+                else ({} if area_mapping is None else {"vacuum": {"area_mapping": area_mapping}})
+            ),
+            entity_id,
+        ),
     )
     return flow
 
@@ -155,19 +218,213 @@ def test_user_form_selects_exactly_one_vacuum_entity() -> None:
     assert selector.config == {"domain": "vacuum", "multiple": False}
 
 
-def test_user_step_creates_entry_identified_by_existing_vacuum_entity() -> None:
+def test_user_step_sets_stable_registry_identity_before_area_selection() -> None:
     flow = configured_flow(entity_exists=True)
 
-    result = asyncio.run(
-        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
+    result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "areas"
+    assert flow.unique_id == "vacuum-registry-entry"
+
+
+def test_supported_vacuum_advances_to_multiple_area_selector() -> None:
+    flow = configured_flow(entity_exists=True)
+
+    result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "areas"
+    schema = result["data_schema"]
+    assert len(schema.schema) == 1
+    area_selector = next(iter(schema.schema.values()))
+    assert area_selector.config == {"multiple": True, "reorder": True}
+    assert flow.unique_id == "vacuum-registry-entry"
+
+
+def test_area_step_creates_entry_with_ordered_mapped_ha_area_ids() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"], "hallway": ["4", "5"]},
     )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["hallway", "kitchen"]}))
 
     assert result == {
         "type": "create_entry",
         "title": "vacuum.downstairs",
-        "data": {CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        "data": {
+            CONF_VACUUM_ENTITY_ID: "vacuum.downstairs",
+            CONF_AREA_IDS: ["hallway", "kitchen"],
+        },
     }
+
+
+def test_area_step_follows_registry_identity_across_entity_rename() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    flow.hass.entity_registry.rename("vacuum.ground_floor")
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    assert result == {
+        "type": "create_entry",
+        "title": "vacuum.ground_floor",
+        "data": {
+            CONF_VACUUM_ENTITY_ID: "vacuum.ground_floor",
+            CONF_AREA_IDS: ["kitchen"],
+        },
+    }
+
+
+def test_area_step_aborts_if_registry_identity_becomes_configured_during_flow() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    flow.hass.entity_registry.rename("vacuum.ground_floor")
+    flow.configured_unique_ids = {"vacuum-registry-entry"}
+
+    with pytest.raises(AbortFlowError, match="already_configured"):
+        asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
     assert flow.unique_id == "vacuum-registry-entry"
+    assert flow.abort_updates == {CONF_VACUUM_ENTITY_ID: "vacuum.ground_floor"}
+
+
+def test_area_step_aborts_if_current_vacuum_state_disappears() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    flow.hass.states.get = lambda _entity_id: None
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    assert result == {"type": "abort", "reason": "invalid_flow_state"}
+
+
+@pytest.mark.parametrize("supported_features", [0, None, "16384", True, -1])
+def test_area_step_aborts_if_current_vacuum_loses_clean_area_capability(
+    supported_features: object,
+) -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    flow.hass.states.get = lambda _entity_id: SimpleNamespace(
+        attributes={"supported_features": supported_features}
+    )
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    assert result == {"type": "abort", "reason": "invalid_flow_state"}
+
+
+@pytest.mark.parametrize("change", ["remove", "replace"])
+def test_area_step_aborts_if_selected_registry_entity_disappears_or_is_replaced(
+    change: str,
+) -> None:
+    area_mapping = {"kitchen": ["7"]}
+    flow = configured_flow(entity_exists=True, area_mapping=area_mapping)
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    registry = flow.hass.entity_registry
+    if change == "remove":
+        registry.remove()
+    else:
+        registry.replace(
+            "vacuum.downstairs",
+            {"vacuum": {"area_mapping": area_mapping}},
+        )
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    assert result == {"type": "abort", "reason": "invalid_flow_state"}
+
+
+@pytest.mark.parametrize(
+    "registry_options",
+    [
+        None,
+        [],
+        {"vacuum": None},
+        {"vacuum": []},
+        {"vacuum": "invalid"},
+        {"vacuum": {"area_mapping": []}},
+        {"vacuum": {"area_mapping": {"kitchen": "7"}}},
+        {"vacuum": {"area_mapping": {"kitchen": [None]}}},
+    ],
+)
+def test_area_step_rejects_malformed_nested_registry_options_without_exception(
+    registry_options: object,
+) -> None:
+    flow = configured_flow(entity_exists=True, registry_options=registry_options)
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {CONF_AREA_IDS: "areas_not_mapped"}
+
+
+def test_area_step_blocks_unmapped_ha_area_ids() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen", "hallway"]}))
+
+    assert result["type"] == "form"
+    assert result["step_id"] == "areas"
+    assert result["errors"] == {CONF_AREA_IDS: "areas_not_mapped"}
+
+
+def test_area_step_rejects_mapping_without_usable_segment_id() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": [""]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {CONF_AREA_IDS: "areas_not_mapped"}
+
+
+def test_area_step_requires_at_least_one_area() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: []}))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {CONF_AREA_IDS: "areas_required"}
+
+
+def test_area_step_rejects_duplicate_area_ids() -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"]},
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen", "kitchen"]}))
+
+    assert result["type"] == "form"
+    assert result["errors"] == {CONF_AREA_IDS: "areas_duplicate"}
 
 
 def test_user_step_accepts_clean_area_combined_with_other_features() -> None:
@@ -176,11 +433,10 @@ def test_user_step_accepts_clean_area_combined_with_other_features() -> None:
         supported_features=int(StubVacuumEntityFeature.CLEAN_AREA) | 8192,
     )
 
-    result = asyncio.run(
-        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
-    )
+    result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
 
-    assert result["type"] == "create_entry"
+    assert result["type"] == "form"
+    assert result["step_id"] == "areas"
     assert flow.unique_id == "vacuum-registry-entry"
 
 
@@ -196,15 +452,11 @@ def test_user_step_rejects_vacuum_without_native_area_cleaning(
         supported_features=supported_features,
     )
 
-    result = asyncio.run(
-        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
-    )
+    result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
 
     assert result["type"] == "form"
     assert result["step_id"] == "user"
-    assert result["errors"] == {
-        CONF_VACUUM_ENTITY_ID: "clean_area_unsupported"
-    }
+    assert result["errors"] == {CONF_VACUUM_ENTITY_ID: "clean_area_unsupported"}
     assert flow.unique_id is None
 
 
@@ -217,23 +469,17 @@ def test_user_step_rejects_malformed_supported_features_fail_closed() -> None:
             supported_features=supported_features,
         )
 
-        result = asyncio.run(
-            flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"})
-        )
+        result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
 
         assert result["type"] == "form"
-        assert result["errors"] == {
-            CONF_VACUUM_ENTITY_ID: "clean_area_unsupported"
-        }
+        assert result["errors"] == {CONF_VACUUM_ENTITY_ID: "clean_area_unsupported"}
         assert flow.unique_id is None
 
 
 def test_user_step_rejects_an_entity_that_no_longer_exists() -> None:
     flow = configured_flow(entity_exists=False, supported_features="not-an-int")
 
-    result = asyncio.run(
-        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.missing"})
-    )
+    result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.missing"}))
 
     assert result["type"] == "form"
     assert result["errors"] == {CONF_VACUUM_ENTITY_ID: "entity_not_found"}
@@ -241,13 +487,11 @@ def test_user_step_rejects_an_entity_that_no_longer_exists() -> None:
 
 
 def test_user_step_aborts_when_vacuum_entity_is_already_configured() -> None:
-    flow = configured_flow(entity_exists=True)
+    flow = configured_flow(entity_exists=True, entity_id="vacuum.renamed")
     flow.configured_unique_ids = {"vacuum-registry-entry"}
 
     with pytest.raises(AbortFlowError, match="already_configured"):
-        asyncio.run(
-            flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.renamed"})
-        )
+        asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.renamed"}))
 
     assert flow.abort_updates == {CONF_VACUUM_ENTITY_ID: "vacuum.renamed"}
 
@@ -255,9 +499,7 @@ def test_user_step_aborts_when_vacuum_entity_is_already_configured() -> None:
 def test_user_step_rejects_entity_without_registry_identity() -> None:
     flow = configured_flow(entity_exists=True, registry_id=None)
 
-    result = asyncio.run(
-        flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.unregistered"})
-    )
+    result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.unregistered"}))
 
     assert result["type"] == "form"
     assert result["errors"] == {CONF_VACUUM_ENTITY_ID: "entity_not_found"}

@@ -1,13 +1,24 @@
 {
   "config": {
     "abort": {
-      "already_configured": "This vacuum is already configured."
+      "already_configured": "This vacuum is already configured.",
+      "invalid_flow_state": "The selected vacuum changed or was removed during setup. Start setup again."
     },
     "error": {
+      "areas_duplicate": "Select each area only once.",
+      "areas_not_mapped": "Every selected area must be mapped to at least one segment for this vacuum. Open the vacuum's area mapping, complete the missing mappings, and try again.",
+      "areas_required": "Select at least one area.",
       "clean_area_unsupported": "The selected vacuum does not provide native area cleaning in Home Assistant.",
       "entity_not_found": "The selected vacuum entity no longer exists."
     },
     "step": {
+      "areas": {
+        "data": {
+          "area_ids": "Areas"
+        },
+        "description": "Select the Home Assistant areas to plan. Their order is used as the stable default order. Every selected area must already be mapped by the vacuum integration.",
+        "title": "Select mapped areas"
+      },
       "user": {
         "data": {
           "vacuum_entity_id": "Vacuum"
