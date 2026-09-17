@@ -22,14 +22,17 @@ Leitplanken:
 ## Dokumentation
 
 - [Produktanforderungen](docs/requirements.md)
+- [Anforderungs-Nachverfolgung](docs/requirements-traceability.md)
 - [Bekannter Ausgangszustand](docs/current-state.md)
-- [Architekturentscheidung](docs/adr/0001-solution-shape.md) *(in Review)*
+- [Architekturentscheidung](docs/adr/0001-solution-shape.md) *(Accepted)*
 - [Zielarchitektur](docs/architecture.md)
+- [Config Flow und Dashboard-Bereitstellung](docs/config-flow-and-dashboard.md)
 - [Queue- und Block-Semantik](docs/queue-semantics.md)
 - [Universeller Entity-Vertrag](docs/entity-contract.md)
-- [Kompatibilitätsmatrix](docs/compatibility.md) *(in Arbeit)*
-- [UX-Spezifikation](docs/ux-specification.md) *(in Arbeit)*
-- [Roadmap](docs/roadmap.md) *(in Arbeit)*
+- [Capability- und Adaptermodell](docs/capabilities.md)
+- [Hersteller-/Integrationsmatrix](docs/compatibility.md)
+- [UX-Spezifikation](docs/ux-specification.md)
+- [Roadmap](docs/roadmap.md)
 
 ## Entwicklungsgrundsätze
 

@@ -1,77 +1,123 @@
 # Universeller Entity-Vertrag
 
-> Entwurf – wird gegen Architektur- und UX-Review geprüft.
+Alle Entities besitzen stabile Unique IDs, `_attr_has_entity_name = True`, übersetzte Namen/Zustände und hängen an **einem Planner-Service-Device pro Config Entry**. Vorhandene Vacuum-Devices, HA-Areas und Queue-Jobs werden nicht dupliziert.
 
-Alle Entity-IDs entstehen aus einer Config Entry und stabilen Unique IDs. Das Dashboard referenziert keine Herstellerentitäten direkt.
+Entity-Zustände sind eine UI-/Automationsprojektion. Plan und Queue werden ausschließlich im versionierten Planner-Store persistiert.
 
-## Planner-Gerät
+## Planner-Service-Device
 
-| Plattform | Semantik | Pflicht |
-|---|---|---|
-| `switch` | Planner aktiv/pausiert | ja |
-| `sensor` | Planner-Zustand | ja |
-| `sensor` | nächste Aktion | ja |
-| `sensor` | heutige Queue, Details als strukturierte Attribute | ja |
-| `sensor` | Capability-Tier und erkannte Fähigkeiten | ja |
-| `button` | fälligen Tagesblock starten | ja |
-| `button` | nächste fällige Einzelaufgabe starten | ja |
-| `button` | laufenden/ausstehenden Plan abbrechen | ja |
-| `button` | Queue neu berechnen, solange noch nicht gestartet | ja |
-| `event` | Job-/Block-Lifecycle für externe Automationen | soll |
+| Plattform | Entity | Semantik | Kategorie |
+|---|---|---|---|
+| `switch` | Planung | automatische Planung aktiv/pausiert | config |
+| `sensor` | Status | `idle`, `ready`, `committing`, `running`, `paused`, `attention` | – |
+| `sensor` | Nächste Aktion | lesbarer nächster Raum/Modus | – |
+| `sensor` | Ausstehende Aufgaben | Anzahl offener Jobs | – |
+| `sensor` | Aktuelle Phase | Block-/Jobphase | – |
+| `sensor` | Nächster Start | Timestamp | – |
+| `sensor` | Capability-Stufe | T0–T3 als UX-Kurzform | diagnostic |
+| `binary_sensor` | Bereit | alle Mappings/Capabilities ausführbar | diagnostic |
+| `binary_sensor` | Eingriff erforderlich | Repair/uncertain/Mappingproblem | diagnostic |
+| `button` | Nächste fällige Aufgabe starten | kanonisches One-Tap über `vacuum_planner.start_next` | – |
+| `button` | Aktuellen Block abbrechen | mit sicherer Bestätigungssemantik in UI | – |
+| `event` | Lifecycle | normalisierte Block-/Jobereignisse | – |
 
-## Raumgerät pro gewählter HA-Area
+Selten benötigte Diagnoseentities sind standardmäßig deaktiviert.
 
-| Plattform | Semantik | Pflicht |
+## Raumbezogene Entities
+
+Diese Entities referenzieren eine HA-Area, bleiben aber am Planner-Service-Device. Es wird **kein künstliches Raumgerät** erzeugt.
+
+| Plattform | Entity | Pflicht/Regel |
 |---|---|---|
 | `switch` | Raum im Plan aktiv | ja |
 | `binary_sensor` | heute fällig | ja |
-| `sensor` | lesbarer Raumstatus | ja |
+| `sensor` | Raumstatus | ja |
 | `sensor` | nächste fällige Aufgabe/Zeit | ja |
-| `number` | Intervall Saugen in Tagen | ja |
-| `number` | Intervall Saugen+Wischen in Tagen | bei Mop-Fähigkeit |
+| `number` | Saugintervall in Tagen | ja |
+| `number` | Saugen+Wischen-Intervall | nur mit Capability |
 | `number` | Priorität | ja |
-| `select` | bevorzugter Modus: Saugen / Saugen+Wischen / automatisch | bei Mop-Fähigkeit |
-| `button` | One-Tap: fällige Aufgabe starten/anhängen | ja |
+| `select` | `automatic`, `vacuum`, `vacuum_and_mop` | Wischoption nur mit Capability |
+| `button` | One-Tap fällige Aufgabe | ja |
 | `button` | heute überspringen | ja |
 | `button` | auf morgen verschieben | soll |
 | `button` | Extra-Reinigung anhängen | soll |
 
-## Attribute des Queue-Sensors
+`mop_only` ist kein Select-Wert. Wird eine Capability nachträglich verloren, wird die betroffene Entity unavailable/ausgeblendet und ein Repair erzeugt; ein Plan wird nicht still degradiert.
+
+## Entity-Attribute
+
+Attribute bleiben klein, stabil und recorderfreundlich. Beispiele:
 
 ```yaml
-block_id: 2f3f...
-block_state: running
-created_at: 2026-09-16T08:00:00+02:00
-jobs:
-  - job_id: 8a12...
-    area_id: kitchen
-    area_name: Küche
-    mode: vacuum_and_mop
-    state: completed
-    position: 1
-  - job_id: 19bc...
-    area_id: hallway
-    area_name: Flur
-    mode: vacuum
-    state: running
-    position: 2
+# sensor.<instance>_status
+active_block_id: "2f3f..."
+guarantee: planner_atomic
+dispatch_strategy: native_batch
+robot_lane_count: 1
+
+# sensor.<instance>_next_action
+area_id: kitchen
+mode: vacuum_and_mop
+due_at: "2026-09-16T08:00:00+02:00"
 ```
 
-Hinweis: Attribute sind für Anzeige und Diagnose gedacht, nicht als einziges Persistenzformat.
+Keine vollständige Queue, History oder Mappingmatrix als dauerhaftes State-Attribut. Detaillierte Queue-Daten kommen über eine read-only Response-Action bzw. validierte WebSocket-API.
 
-## Services
+## Actions
 
-UI-Buttons decken Standardfälle ab. Für Automationen stehen zusätzlich stabile Services bereit:
+| Action | Zweck | zentrale Felder |
+|---|---|---|
+| `start_next` | kanonische öffentliche One-Tap-Action; startet die nächste fällige Aufgabe | Planner-Ziel |
+| `start_due_block` | technische Block-Action; fälligen Snapshot versiegeln und committen | Planner-Ziel, optional Idempotency-Key |
+| `enqueue_area` | Area hinten anhängen | Planner-Ziel, `area_id`, Modus, Wiederholung bestätigen |
+| `skip_area_today` | aktuelle Tagesfälligkeit überspringen | Planner-Ziel, `area_id` |
+| `postpone_area` | Fälligkeit verschieben | Planner-Ziel, `area_id`, Datum/Tage |
+| `cancel_block` | laufenden/offenen Block abbrechen | Planner-Ziel, `block_id` |
+| `resolve_uncertain_run` | Recoveryentscheidung | Planner-Ziel, Run/Job, explizite Auflösung |
+| `get_queue` | read-only Queue-Response | Planner-Ziel, optional Zeitraum |
 
-- `vacuum_planner.start_due_block`
-- `vacuum_planner.enqueue_room`
-- `vacuum_planner.skip_room_today`
-- `vacuum_planner.postpone_room`
-- `vacuum_planner.cancel_block`
-- `vacuum_planner.resolve_unknown_job`
+Actions adressieren niemals implizit „den ersten Planner“. Öffentliche Felder verwenden HA-Area-IDs, nie rohe Segment-IDs. Mutationen laufen immer durch denselben Coordinator/Lock.
 
-Jeder Service adressiert die Config Entry bzw. das Planner-Gerät und verwendet `area_id`, niemals rohe Hersteller-Segment-IDs.
+Buttons, Dashboard und normale Automationen verwenden für One-Tap ausschließlich `vacuum_planner.start_next`. `vacuum_planner.start_due_block` bleibt der internen bzw. fortgeschrittenen Blocksteuerung vorbehalten und ist kein Synonym für One-Tap.
 
-## Dashboard-Regel
+## `get_queue`-Response (Beispiel)
 
-Das mitgelieferte Dashboard liest ausschließlich diesen Vertrag. Herstellerstatus wie Akku oder Dockzustand wird über normalisierte Planner-Sensorattribute oder eine bewusst eingebettete Standard-`vacuum.*`-Karte angezeigt, nicht über Dreame-/Roborock-spezifische Sensoren.
+```yaml
+revision: 42
+block:
+  block_id: "2f3f..."
+  state: running
+  guarantee: planner_atomic
+  jobs:
+    - job_id: "8a12..."
+      area_id: kitchen
+      area_name: Küche
+      mode: vacuum_and_mop
+      state: completed
+      position: 1
+    - job_id: "19bc..."
+      area_id: hallway
+      area_name: Flur
+      mode: vacuum
+      state: running
+      position: 2
+appended_jobs: []
+```
+
+## Events
+
+- `block_sealed`
+- `block_committed`
+- `block_completed`
+- `job_started`
+- `job_completed`
+- `job_failed`
+- `run_uncertain`
+
+Events enthalten Planner-/Block-/Job-ID, Area-ID, normalisierten Modus und Ergebnis. Keine Credentials, Segment-IDs oder unredigierten Adapterpayloads.
+
+## Dashboard-Vertrag
+
+Das Standarddashboard liest ausschließlich diese Entities/Actions und die Queue-Response. Akku/Dockzustand kann bewusst über die im Config Entry gewählte Standard-`vacuum.*`-Entity angezeigt werden; herstellerspezifische Sensoren sind nicht Teil des Contracts.
+
+Der Entity-Vertrag bleibt über Minor-Releases additiv. Umbenennungen oder Zustandsänderungen erfordern Migration und dokumentierte Deprecation.

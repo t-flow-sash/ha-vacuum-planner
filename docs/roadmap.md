@@ -8,9 +8,9 @@
 - [x] Custom Integration als führende Lösungsform bestimmen
 - [x] Queue-/Block-Invarianten dokumentieren
 - [x] ersten universellen Entity-Vertrag definieren
-- [ ] Kompatibilitätsmatrix und Capability-Tiers reviewen
-- [ ] UX-Flow und Dashboard-Strategie freigeben
-- [ ] ADR 0001 auf `Accepted` setzen
+- [x] Kompatibilitätsmatrix und Capability-Tiers reviewen
+- [x] UX-Flow und Dashboard-Strategie freigeben
+- [x] ADR 0001 auf `Accepted` setzen
 
 **Gate:** Architektur-, UX- und Integrationsreview widersprechen sich nicht; offene Annahmen sind markiert.
 
@@ -22,7 +22,7 @@
 - Fälligkeitsberechnung für Saugen und Saugen+Wischen
 - Priorisierung und unveränderliche Snapshot-Blöcke
 - Append-/Dedup-Regeln für Ad-hoc-Jobs
-- Zustandsautomat einschließlich Fehler/Unknown
+- Zustandsautomat einschließlich Fehler/`uncertain`
 - versioniertes Persistenzschema und Migrationen
 - Unit- und Property-Tests
 
@@ -63,13 +63,12 @@
 
 Priorität:
 
-1. Native `vacuum.clean_area`
-2. Dreame/Mova
-3. Roborock
-4. Valetudo/MQTT
-5. Eufy
-6. Ecovacs/Deebot
-7. iRobot/Roomba und weitere Fallback-Plattformen
+1. nativer `vacuum.clean_area`-Pfad (u. a. Roborock, Ecovacs, Matter, MQTT/Valetudo und kompatible Custom Integrations)
+2. Dreame/Mova-Erweiterung für Modus, Sequenz und Telemetrie
+3. Xiaomi-Miio-Segmentadapter
+4. Eufy-Erweiterung/Fallback für modellabhängige Raumfunktionen
+5. Valetudo-Erweiterung nur für Iterationen/Custom Order
+6. Long Tail: Narwal, Shark2MQTT und bewusst eingeschränkte Ganzflächenplattformen
 
 Adapter dürfen nur normalisierte Fähigkeiten bereitstellen:
 

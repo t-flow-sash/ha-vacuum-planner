@@ -1,54 +1,126 @@
-# ADR 0001: Lösungsform
+# ADR 0001: Hybridarchitektur mit Custom-Integration-Kern
 
-- Status: **In Review**
+- Status: **Accepted**
 - Datum: 2026-09-16
+- Entscheider: Projektteam
 
 ## Kontext
 
-Ein reiner Automation- oder Script-Blueprint kann Benutzerlogik wiederverwendbar machen, besitzt aber keinen vollständigen Config Flow, kann keinen stabilen Satz eigener Entitäten dynamisch verwalten und kann kein universelles Produkt-Onboarding oder robustes Adaptermodell bereitstellen. Außerdem sind automatisch erzeugte bzw. verlässlich referenzierbare Dashboard-Entitäten und persistente Queue-Zustände Kernanforderungen.
+Der Planner soll ohne YAML oder Programmierung eingerichtet werden, native HA-Areas verwenden, einen gestarteten Tagesplan als geschlossenen Block behandeln, danach Ad-hoc-Aufgaben anhängen und einen stabilen, herstellerneutralen Entity-/Dashboard-Vertrag bereitstellen. Hersteller unterscheiden sich deutlich bei Raumreinigung, Moduswahl, Gerätequeue, Telemetrie und Run-Korrelation.
 
-## Vorläufige Entscheidung
+Zu entscheiden ist zwischen:
 
-Eine **Custom Integration mit optionalen Blueprints/Beispielautomationen** ist der führende Lösungsweg.
+1. Automation Blueprint;
+2. Script Blueprint;
+3. Custom Integration;
+4. Hybrid aus Custom Integration und optionalen Blueprints/Frontend.
 
-Die aktuelle Home-Assistant-Vacuum-API stellt mit `vacuum.clean_area` bereits eine entscheidende native Basis bereit: Benutzer ordnen vom Roboter gemeldete Segmente in den Einstellungen HA-Areas zu; der Service akzeptiert mehrere Areas in einer vom Benutzer vorgegebenen Reihenfolge. Der Planner muss diese Zuordnung weder duplizieren noch rohe Segment-IDs zum primären Datenmodell machen. Er muss beim Onboarding aber prüfen, ob `VacuumEntityFeature.CLEAN_AREA` und ein vollständiges `area_mapping` vorhanden sind.
+## Entscheidungstreiber
 
-Ein einzelner `vacuum.clean_area`-Aufruf ist noch keine herstellerübergreifende Garantie für eine transaktionale Gerätequeue oder raumgenaue Abschlussbestätigung. Daher bleibt ein persistentes Planner-Ledger erforderlich.
+- UI-only Config/Reconfigure/Options;
+- persistentes, versioniertes Domain- und Queue-Modell;
+- zentraler Lock, Idempotenz und Recovery nach HA-Neustart;
+- eigene stabile Entities, Actions, Repairs und Diagnostics;
+- native HA-Areas als Raumidentität;
+- Capability-Erkennung und isolierte Herstelleradapter;
+- dynamisch bereitstellbares Standarddashboard;
+- testbare, ehrliche Block-/Queue-Garantien.
 
-Der Integration-Core verantwortet:
+## Bewertete Optionen
 
-- Config Flow und Options Flow
-- Auswahl der `vacuum.*`-Entität
-- Auswahl und Validierung von HA-Areas
-- persistentes Plan-/Queue-Modell
-- herstellerunabhängige Sensoren, Buttons, Switches, Selects und Kalender-/Zeitinformationen
-- Capability-Erkennung und Adapterauswahl
-- Repairs und Diagnostik
-- Dashboard-Vertrag und Dashboard-Artefakt
+| Kriterium | Automation Blueprint | Script Blueprint | Custom Integration | Hybrid |
+|---|---:|---:|---:|---:|
+| UI-Onboarding ohne YAML | teilweise | teilweise | **ja** | **ja** |
+| persistentes Domainmodell | nein | nein | **ja** | **ja** |
+| eigener Entity-Vertrag | nein | nein | **ja** | **ja** |
+| globales Lock/Recovery | schwach | schwach | **stark** | **stark** |
+| Capability-/Adaptermodell | unwartbar | begrenzt | **sauber** | **sauber** |
+| Dashboard-Strategy/Repairs | nein | nein | **ja** | **ja** |
+| einfache Verteilung | **stark** | **stark** | mittel | mittel |
+| Trigger-/Automationskomposition | **stark** | stark | mittel | **stark** |
 
-Optionale Blueprints können später Ereignisse des Planners mit Anwesenheit, Energiepreisen oder Haushaltsregeln verbinden. Sie sind Erweiterungspunkte, nicht das Produktfundament.
+### Automation Blueprint
 
-## Noch zu prüfen
+Geeignet, um Zeit-, Präsenz- oder Haushaltsregeln an eine Planner-Action zu koppeln. Nicht geeignet als Kern: `mode: queued` serialisiert nur Runs dieser Automation, ist keine Gerätequeue-Transaktion, kein globaler Lock und keine robuste Neustartpersistenz.
 
-- belastbare Grenzen der programmgesteuerten Dashboard-Bereitstellung in aktuellen HA-Versionen
-- stabilste öffentliche Schnittstelle für Area-/Room-to-Segment-Mapping
-- Semantik von Queue-Blöcken bei Plattformen ohne native Queue
-- Mindestumfang eines generischen `vacuum.*`-Fallbacks
-- Review durch Architektur-, Integrations- und UX-Workstreams
+### Script Blueprint
+
+Geeignet als optionale Aktionshülle. Auch `mode: queued` garantiert weder Robot-Atomizität noch Recovery oder Schutz vor anderen Serviceaufrufen. Komplexe Adapter-/Capability-Logik würde in schwer testbare Jinja-Verzweigungen ausufern.
+
+### Reine Custom Integration
+
+Erfüllt die Kernanforderungen, lässt jedoch die gute Wiederverwendbarkeit von HA-Triggern und eine optionale Frontend-Strategy ungenutzt.
+
+## Entscheidung
+
+Wir wählen eine **Hybridarchitektur mit einer schlanken Custom Integration als verbindlichem Kern**.
+
+Der Kern verantwortet:
+
+- Config Flow, Reconfigure und Options;
+- Plan-, Snapshot-, Queue- und Run-Domainmodell;
+- versionierte Persistenz, Locking, Idempotenz und Recovery;
+- Capability-Probe und Adapterauswahl;
+- HA-Area-Validierung und Mapping-Gates;
+- universelle Entities und Actions;
+- Repairs, Diagnostics und normalisierte Events.
+
+Optionale Schichten:
+
+- Automation Blueprints ausschließlich als Zeit-/Präsenz-/Energie-Trigger;
+- Script Blueprint höchstens als Komfortwrapper um öffentliche Actions;
+- Custom Dashboard Strategy für ein einmal bestätigtes, danach dynamisches Hauptdashboard;
+- Vendor-Adapter nur dort, wo öffentliche HA-Abstraktionen fehlen.
+
+Kritische Zustandslogik und Queue-Semantik dürfen **nie** in Blueprint und Integration doppelt existieren.
+
+## Native HA-Basis
+
+Der bevorzugte generische Pfad nutzt `VacuumEntityFeature.CLEAN_AREA`, das native Segment-zu-Area-Mapping und `vacuum.clean_area` mit geordneter Area-Liste. HA-Area-IDs sind die öffentliche Raumidentität. Rohe Segment-IDs bleiben Adapterdetails.
+
+Ein einzelner `vacuum.clean_area`-Aufruf beweist jedoch weder eine transaktionale Gerätequeue noch raumgenauen Fortschritt. Deshalb führt der Planner ein eigenes persistentes Ledger.
+
+## Verbindliche Garantiegrenze
+
+Wir unterscheiden:
+
+1. **Planner-Atomizität:** Tagesjobs werden vollständig validiert, als unveränderlicher Block in einem kritischen Abschnitt persistiert und spätere Jobs dahinter angehängt. Diese Garantie liefert der Kern.
+2. **Robot-Atomizität:** Der komplette Block ist als unteilbarer Auftrag in der Gerätequeue bestätigt und spätere Jobs können dort angehängt werden. Diese Garantie wird nur bei expliziter Adapter-Capability angezeigt.
+
+Bei Geräten ohne native Queue emuliert der Planner die Reihenfolge. Die UI darf dies nicht als „atomar in Gerätequeue übertragen“ bezeichnen.
 
 ## Konsequenzen
 
 ### Positiv
 
-- echte UI-first Einrichtung
-- eigene universelle Entitäten
-- saubere Migration, Diagnostik und Übersetzungen
-- testbares Core-/Adaptermodell
-- kontrollierte Degradierung nach Capability-Tier
+- vollständige UI-first Einrichtung;
+- testbarer herstellerneutraler Core;
+- robuste Queue/Recovery und universelle Entities;
+- Capability-Tiers erlauben inkrementelle Adapterentwicklung;
+- Blueprints bleiben nützliche, aber ungefährliche Erweiterungspunkte;
+- Dashboard kann ohne installationsspezifische IDs generiert werden.
 
 ### Negativ
 
-- deutlich mehr Entwicklungs- und Wartungsaufwand als ein Blueprint
-- HACS-/Custom-Repository-Verteilung bis zu einer möglichen Core-Aufnahme
-- Home-Assistant-API-Änderungen müssen aktiv verfolgt werden
-- Herstelleradapter bleiben aufgrund externer Integrationen wartungsintensiv
+- höherer Entwicklungs-, Test- und Wartungsaufwand;
+- HACS-/Custom-Repository-Verteilung bis zu möglicher Core-Aufnahme;
+- Frontend- und HA-API-Kompatibilität müssen gepflegt werden;
+- starke Robot-Atomizität bleibt herstellerabhängig;
+- „Dashboard vollautomatisch installieren“ wird auf einen bestätigten Anlegeschritt reduziert.
+
+## Verworfene Annahmen
+
+- HA-Script-/Automation-`queued` ist **keine** Roboterqueue.
+- Ein Mehrraum-Serviceaufruf ist **nicht automatisch** transaktional.
+- Entity-State/Recorder ist **kein** Queue-Persistenzlayer.
+- Herstellername oder Entity-ID-Präfix ist **kein** Capability-Beweis.
+
+## Folgeentscheidungen
+
+- Domain-/Komponentenmodell: [Technische Zielarchitektur](../architecture.md)
+- Queue-Invarianten: [Queue- und Block-Semantik](../queue-semantics.md)
+- Adapter/Tiers: [Capability- und Adaptermodell](../capabilities.md)
+- Hersteller-/Integrationsmatrix: [Kompatibilitätsrecherche](../compatibility.md)
+- Config Flow/Dashboard: [Config Flow und Dashboard](../config-flow-and-dashboard.md)
+- Entitäten: [Universeller Entity-Vertrag](../entity-contract.md)
+- Umsetzung: [Roadmap](../roadmap.md)
