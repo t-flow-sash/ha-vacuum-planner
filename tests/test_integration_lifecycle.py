@@ -9,6 +9,7 @@ import pytest
 
 from custom_components.vacuum_planner import async_setup_entry, async_unload_entry
 from custom_components.vacuum_planner.const import (
+    CONF_PLANNING_ENABLED,
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
     VacuumPlannerRuntimeData,
@@ -41,6 +42,7 @@ def test_setup_and_unload_manage_entry_runtime_data_without_platforms() -> None:
     hass = SimpleNamespace()
     entry = SimpleNamespace(
         data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={},
         unique_id=None,
         runtime_data=None,
     )
@@ -49,9 +51,23 @@ def test_setup_and_unload_manage_entry_runtime_data_without_platforms() -> None:
     assert entry.runtime_data == VacuumPlannerRuntimeData(
         vacuum_entity_id="vacuum.downstairs"
     )
+    assert entry.runtime_data.planning_enabled is True
 
     assert asyncio.run(async_unload_entry(hass, entry)) is True
     assert entry.runtime_data is None
+
+
+def test_setup_exposes_disabled_planning_option_in_runtime_data() -> None:
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(
+        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={CONF_PLANNING_ENABLED: False},
+        unique_id=None,
+        runtime_data=None,
+    )
+
+    assert asyncio.run(async_setup_entry(hass, entry)) is True
+    assert entry.runtime_data.planning_enabled is False
 
 
 def test_setup_resolves_current_entity_id_from_stable_registry_identity(
@@ -80,6 +96,7 @@ def test_setup_resolves_current_entity_id_from_stable_registry_identity(
     )
     entry = SimpleNamespace(
         data={CONF_VACUUM_ENTITY_ID: "vacuum.old_name"},
+        options={},
         unique_id="vacuum-registry-entry",
         runtime_data=None,
     )
@@ -135,6 +152,7 @@ def test_setup_loads_entry_specific_planner_state_from_atomic_ha_store(
     entry = SimpleNamespace(
         entry_id="planner-entry-1",
         data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={},
         unique_id=None,
         runtime_data=None,
     )
@@ -175,6 +193,7 @@ def test_setup_initializes_and_persists_empty_authoritative_state(
     entry = SimpleNamespace(
         entry_id="planner-entry-1",
         data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={},
         unique_id=None,
         runtime_data=None,
     )
@@ -247,6 +266,7 @@ def test_setup_quarantines_and_persists_ambiguous_dispatch_before_runtime_publis
     entry = SimpleNamespace(
         entry_id="planner-entry-1",
         data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={},
         unique_id=None,
         runtime_data=None,
     )
@@ -302,6 +322,7 @@ def test_setup_retries_when_planner_store_has_transient_io_failure(
     entry = SimpleNamespace(
         entry_id="planner-entry-1",
         data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={},
         unique_id=None,
         runtime_data=None,
     )

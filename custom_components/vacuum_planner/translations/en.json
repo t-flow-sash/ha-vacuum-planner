@@ -27,5 +27,16 @@
         "title": "Select a vacuum"
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "planning_enabled": "Planning preference enabled"
+        },
+        "description": "Store whether future planning paths should be enabled. This beta does not run automatic planning and remains in shadow/dry-run mode.",
+        "title": "Planner behavior"
+      }
+    }
   }
 }

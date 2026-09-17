@@ -7,18 +7,45 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.components.vacuum import VacuumEntityFeature
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import ATTR_SUPPORTED_FEATURES
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
-from .const import CONF_AREA_IDS, CONF_VACUUM_ENTITY_ID, DOMAIN
+from .const import CONF_AREA_IDS, CONF_PLANNING_ENABLED, CONF_VACUUM_ENTITY_ID, DOMAIN
+
+
+class VacuumPlannerOptionsFlow(OptionsFlow):  # type: ignore[misc]
+    """Configure optional planner behavior without changing topology."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Configure whether automatic planning is enabled."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_PLANNING_ENABLED,
+                        default=self.config_entry.options.get(CONF_PLANNING_ENABLED, True),
+                    ): bool
+                }
+            ),
+        )
 
 
 class VacuumPlannerConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg, misc]
     """Configure one Vacuum Planner entry for one existing vacuum entity."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(_config_entry: object) -> VacuumPlannerOptionsFlow:
+        """Return the options flow for one planner entry."""
+        return VacuumPlannerOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize transient onboarding state."""

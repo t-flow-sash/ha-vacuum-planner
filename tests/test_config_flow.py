@@ -57,6 +57,17 @@ class StubConfigFlow:
         return {"type": "abort", **result}
 
 
+class StubOptionsFlow:
+    def __init__(self) -> None:
+        self.config_entry: Any = None
+
+    def async_show_form(self, **result: object) -> dict[str, object]:
+        return {"type": "form", **result}
+
+    def async_create_entry(self, **result: object) -> dict[str, object]:
+        return {"type": "create_entry", **result}
+
+
 class StubEntitySelectorConfig(dict[str, object]):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(kwargs)
@@ -135,6 +146,7 @@ def import_config_flow() -> ModuleType:
     vars(vacuum)["VacuumEntityFeature"] = StubVacuumEntityFeature
     vars(config_entries)["ConfigFlow"] = StubConfigFlow
     vars(config_entries)["ConfigFlowResult"] = dict[str, object]
+    vars(config_entries)["OptionsFlow"] = StubOptionsFlow
     vars(const)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     helpers = ModuleType("homeassistant.helpers")
     entity_registry = ModuleType("homeassistant.helpers.entity_registry")
@@ -216,6 +228,35 @@ def test_user_form_selects_exactly_one_vacuum_entity() -> None:
     assert len(schema_definition) == 1
     selector = next(iter(schema_definition.values()))
     assert selector.config == {"domain": "vacuum", "multiple": False}
+
+
+def test_options_flow_persists_planning_enabled_preference() -> None:
+    module = import_config_flow()
+    flow = module.VacuumPlannerOptionsFlow()
+    flow.config_entry = SimpleNamespace(options={})
+
+    form = asyncio.run(flow.async_step_init())
+    planning_field = next(iter(form["data_schema"].schema))
+    assert planning_field.schema == "planning_enabled"
+    assert form["data_schema"]({}) == {"planning_enabled": True}
+
+    result = asyncio.run(flow.async_step_init({"planning_enabled": False}))
+
+    assert result == {
+        "type": "create_entry",
+        "title": "",
+        "data": {"planning_enabled": False},
+    }
+
+
+def test_config_flow_exposes_options_flow_to_home_assistant() -> None:
+    module = import_config_flow()
+
+    options_flow = module.VacuumPlannerConfigFlow.async_get_options_flow(
+        SimpleNamespace(options={})
+    )
+
+    assert isinstance(options_flow, module.VacuumPlannerOptionsFlow)
 
 
 def test_user_step_sets_stable_registry_identity_before_area_selection() -> None:

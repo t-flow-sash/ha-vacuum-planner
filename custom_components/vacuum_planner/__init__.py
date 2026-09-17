@@ -8,7 +8,12 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
-from .const import CONF_VACUUM_ENTITY_ID, DOMAIN, VacuumPlannerRuntimeData
+from .const import (
+    CONF_PLANNING_ENABLED,
+    CONF_VACUUM_ENTITY_ID,
+    DOMAIN,
+    VacuumPlannerRuntimeData,
+)
 from .coordinator import PlannerCoordinator
 from .domain.models import PlannerState, PlanRevision, QueueLedger
 from .domain.queue import quarantine_ambiguous_dispatches
@@ -118,6 +123,7 @@ async def async_setup_entry(
             ) from err
     entry.runtime_data = VacuumPlannerRuntimeData(
         vacuum_entity_id=vacuum_entity_id,
+        planning_enabled=entry.options.get(CONF_PLANNING_ENABLED, True),
         store=planner_store,
         coordinator=coordinator,
     )

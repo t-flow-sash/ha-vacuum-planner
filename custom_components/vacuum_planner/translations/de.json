@@ -27,5 +27,16 @@
         "title": "Saugroboter auswählen"
       }
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": {
+          "planning_enabled": "Planungspräferenz aktiviert"
+        },
+        "description": "Legt fest, ob künftige Planungspfade aktiviert sein sollen. Diese Beta führt keine automatische Planung aus und bleibt im Shadow-/Dry-Run-Modus.",
+        "title": "Planerverhalten"
+      }
+    }
   }
 }
