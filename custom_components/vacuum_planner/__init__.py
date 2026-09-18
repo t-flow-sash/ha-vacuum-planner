@@ -8,12 +8,16 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
+import voluptuous as vol
+
 from .const import (
     CONF_AREA_IDS,
+    CONF_CONFIG_ENTRY_ID,
     CONF_DRY_RUN,
     CONF_PLANNING_ENABLED,
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
+    SERVICE_GET_QUEUE,
     VacuumPlannerRuntimeData,
 )
 from .coordinator import PlannerCoordinator
@@ -55,6 +59,84 @@ class _StorageModule(Protocol):
 
 class _ExceptionsModule(Protocol):
     ConfigEntryNotReady: type[Exception]
+    ServiceValidationError: type[Exception]
+
+
+class _SupportsResponse(Protocol):
+    ONLY: object
+
+
+class _CoreModule(Protocol):
+    SupportsResponse: _SupportsResponse
+
+
+class _ServiceCall(Protocol):
+    data: dict[str, object]
+
+
+def get_queue_response(runtime_data: VacuumPlannerRuntimeData) -> dict[str, object]:
+    """Return the recorder-safe public queue projection."""
+    state = runtime_data.state
+    if state is None:
+        return {"revision": 0, "blocks": [], "jobs": []}
+    return {
+        "revision": state.ledger.revision,
+        "blocks": [
+            {
+                "block_id": block.block_id,
+                "kind": block.kind.value,
+                "state": block.state.value,
+                "guarantee": block.guarantee.value,
+                "job_ids": list(block.job_ids),
+            }
+            for block in state.ledger.blocks
+        ],
+        "jobs": [
+            {
+                "job_id": job.job_id,
+                "block_id": job.block_id,
+                "area_id": job.area_id,
+                "area_name": job.area_name_snapshot,
+                "mode": job.mode.value,
+                "state": job.state.value,
+                "position": job.position,
+            }
+            for job in state.ledger.jobs
+        ],
+    }
+
+
+def _register_get_queue_action(hass: HomeAssistant) -> None:
+    """Register the read-only queue response action once per HA instance."""
+    runtimes = hass.data[DOMAIN]
+
+    async def async_get_queue(call: object) -> dict[str, object]:
+        call_data = cast("_ServiceCall", call).data
+        entry_id = cast("str", call_data[CONF_CONFIG_ENTRY_ID])
+        runtime_data = cast("dict[str, VacuumPlannerRuntimeData]", runtimes).get(entry_id)
+        if runtime_data is None:
+            exceptions = cast(
+                "_ExceptionsModule",
+                import_module("homeassistant.exceptions"),
+            )
+            raise exceptions.ServiceValidationError("Vacuum Planner entry is not loaded")
+        return get_queue_response(runtime_data)
+
+    core = cast("_CoreModule", import_module("homeassistant.core"))
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_QUEUE,
+        async_get_queue,
+        schema=vol.Schema({vol.Required(CONF_CONFIG_ENTRY_ID): str}),
+        supports_response=core.SupportsResponse.ONLY,
+    )
+
+
+async def async_setup(hass: HomeAssistant, _config: object) -> bool:
+    """Register integration actions independently of config-entry availability."""
+    hass.data.setdefault(DOMAIN, {})
+    _register_get_queue_action(hass)
+    return True
 
 
 async def async_setup_entry(
@@ -135,20 +217,30 @@ async def async_setup_entry(
             raise exceptions.ConfigEntryNotReady(
                 "Unable to load or initialize stored Vacuum Planner state"
             ) from err
-    entry.runtime_data = VacuumPlannerRuntimeData(
+    runtime_data = VacuumPlannerRuntimeData(
         vacuum_entity_id=vacuum_entity_id,
         planning_enabled=entry.options.get(CONF_PLANNING_ENABLED, True),
         dry_run=entry.options.get(CONF_DRY_RUN, True),
         store=planner_store,
         coordinator=coordinator,
     )
+    entry.runtime_data = runtime_data
+    if (
+        (entry_id := getattr(entry, "entry_id", None))
+        and hasattr(hass, "data")
+        and hasattr(hass, "services")
+    ):
+        hass.data.setdefault(DOMAIN, {})[entry_id] = runtime_data
     return True
 
 
 async def async_unload_entry(
-    _hass: HomeAssistant,
+    hass: HomeAssistant,
     entry: ConfigEntry[VacuumPlannerRuntimeData | None],
 ) -> bool:
     """Unload a Vacuum Planner config entry."""
+    if entry_id := getattr(entry, "entry_id", None):
+        runtimes = hass.data.get(DOMAIN, {})
+        runtimes.pop(entry_id, None)
     entry.runtime_data = None
     return True

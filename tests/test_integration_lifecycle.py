@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -7,6 +8,7 @@ from uuid import UUID
 
 import pytest
 
+from custom_components import vacuum_planner as integration
 from custom_components.vacuum_planner import async_setup_entry, async_unload_entry
 from custom_components.vacuum_planner.const import (
     CONF_AREA_IDS,
@@ -58,6 +60,113 @@ def test_setup_and_unload_manage_entry_runtime_data_without_platforms() -> None:
 
     assert asyncio.run(async_unload_entry(hass, entry)) is True
     assert entry.runtime_data is None
+
+
+def test_integration_setup_registers_read_only_get_queue_action_permanently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: dict[
+        str,
+        tuple[Callable[[object], Coroutine[object, object, dict[str, object]]], object, object],
+    ] = {}
+    removed: list[tuple[str, str]] = []
+
+    class EmptyHAStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def async_load(self) -> None:
+            return None
+
+        async def async_save(self, _data: dict[str, Any]) -> None:
+            pass
+
+    class Services:
+        def async_register(
+            self,
+            domain: str,
+            service: str,
+            handler: Callable[[object], Coroutine[object, object, dict[str, object]]],
+            *,
+            schema: object,
+            supports_response: object,
+        ) -> None:
+            registered[f"{domain}.{service}"] = (handler, schema, supports_response)
+
+        def async_remove(self, domain: str, service: str) -> None:
+            removed.append((domain, service))
+
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    core_module = ModuleType("homeassistant.core")
+    vars(storage_module)["Store"] = EmptyHAStore
+    vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(homeassistant_module)["core"] = core_module
+    vars(helpers_module)["storage"] = storage_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
+
+    hass = SimpleNamespace(data={}, services=Services())
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={
+            CONF_VACUUM_ENTITY_ID: "vacuum.downstairs",
+            CONF_AREA_IDS: ["kitchen"],
+        },
+        options={},
+        unique_id=None,
+        runtime_data=None,
+    )
+
+    assert asyncio.run(integration.async_setup(hass, {})) is True
+    assert asyncio.run(async_setup_entry(hass, entry)) is True
+    handler, _schema, supports_response = registered["vacuum_planner.get_queue"]
+    response = asyncio.run(handler(SimpleNamespace(data={"config_entry_id": entry.entry_id})))
+
+    assert supports_response == "only"
+    assert response == {"revision": 0, "blocks": [], "jobs": []}
+    assert asyncio.run(async_unload_entry(hass, entry)) is True
+    assert removed == []
+
+
+def test_get_queue_action_rejects_an_unloaded_config_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: dict[
+        str,
+        Callable[[object], Coroutine[object, object, dict[str, object]]],
+    ] = {}
+
+    class StubServiceValidationError(Exception):
+        pass
+
+    class Services:
+        def async_register(
+            self,
+            domain: str,
+            service: str,
+            handler: Callable[[object], Coroutine[object, object, dict[str, object]]],
+            **_kwargs: object,
+        ) -> None:
+            registered[f"{domain}.{service}"] = handler
+
+    core_module = ModuleType("homeassistant.core")
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
+    vars(exceptions_module)["ServiceValidationError"] = StubServiceValidationError
+    monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+    hass = SimpleNamespace(data={}, services=Services())
+
+    assert asyncio.run(integration.async_setup(hass, {})) is True
+    handler = registered["vacuum_planner.get_queue"]
+
+    with pytest.raises(StubServiceValidationError, match="not loaded"):
+        asyncio.run(handler(SimpleNamespace(data={"config_entry_id": "missing"})))
 
 
 def test_setup_exposes_disabled_planning_option_in_runtime_data() -> None:

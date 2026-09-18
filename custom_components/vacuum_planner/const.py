@@ -15,6 +15,8 @@ CONF_VACUUM_ENTITY_ID = "vacuum_entity_id"
 CONF_AREA_IDS = "area_ids"
 CONF_DRY_RUN = "dry_run"
 CONF_PLANNING_ENABLED = "planning_enabled"
+CONF_CONFIG_ENTRY_ID = "config_entry_id"
+SERVICE_GET_QUEUE = "get_queue"
 DEFAULT_TITLE = "Vacuum Planner"
 
 
