@@ -20,6 +20,7 @@ from .const import (
     CONF_PLANNING_ENABLED,
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
+    PLATFORMS,
     SERVICE_GET_QUEUE,
     SERVICE_START_NEXT,
     VacuumPlannerRuntimeData,
@@ -535,6 +536,8 @@ async def async_setup_entry(
         and hasattr(hass, "services")
     ):
         hass.data.setdefault(DOMAIN, {})[entry_id] = runtime_data
+    if hasattr(getattr(hass, "config_entries", None), "async_forward_entry_setups"):
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
@@ -543,6 +546,10 @@ async def async_unload_entry(
     entry: ConfigEntry[VacuumPlannerRuntimeData | None],
 ) -> bool:
     """Unload a Vacuum Planner config entry."""
+    if hasattr(getattr(hass, "config_entries", None), "async_unload_platforms"):
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        if not unload_ok:
+            return False
     if entry_id := getattr(entry, "entry_id", None):
         runtimes = hass.data.get(DOMAIN, {})
         runtimes.pop(entry_id, None)

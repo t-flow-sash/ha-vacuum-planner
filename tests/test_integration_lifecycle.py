@@ -64,6 +64,52 @@ def test_setup_and_unload_manage_entry_runtime_data_without_platforms() -> None:
     assert entry.runtime_data is None
 
 
+def test_setup_forwards_sensor_platform_and_unload_removes_it() -> None:
+    forwarded: list[tuple[object, tuple[str, ...]]] = []
+    unloaded: list[tuple[object, tuple[str, ...]]] = []
+
+    class ConfigEntries:
+        async def async_forward_entry_setups(
+            self, entry: object, platforms: tuple[str, ...]
+        ) -> None:
+            forwarded.append((entry, platforms))
+
+        async def async_unload_platforms(
+            self, entry: object, platforms: tuple[str, ...]
+        ) -> bool:
+            unloaded.append((entry, platforms))
+            return True
+
+    hass = SimpleNamespace(config_entries=ConfigEntries())
+    entry = SimpleNamespace(
+        data={CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"},
+        options={},
+        unique_id=None,
+        runtime_data=None,
+    )
+
+    assert asyncio.run(async_setup_entry(hass, entry)) is True
+    assert forwarded == [(entry, ("sensor",))]
+    assert asyncio.run(async_unload_entry(hass, entry)) is True
+    assert unloaded == [(entry, ("sensor",))]
+    assert entry.runtime_data is None
+
+
+def test_failed_platform_unload_preserves_runtime_data() -> None:
+    class ConfigEntries:
+        async def async_unload_platforms(
+            self, _entry: object, _platforms: tuple[str, ...]
+        ) -> bool:
+            return False
+
+    runtime_data = VacuumPlannerRuntimeData(vacuum_entity_id="vacuum.downstairs")
+    hass = SimpleNamespace(config_entries=ConfigEntries())
+    entry = SimpleNamespace(entry_id=None, runtime_data=runtime_data)
+
+    assert asyncio.run(async_unload_entry(hass, entry)) is False
+    assert entry.runtime_data is runtime_data
+
+
 def test_integration_setup_registers_read_only_get_queue_action_permanently(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

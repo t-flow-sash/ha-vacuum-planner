@@ -28,6 +28,21 @@
       }
     }
   },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "attention": "Attention required",
+          "committing": "Committing",
+          "idle": "Idle",
+          "paused": "Paused",
+          "ready": "Ready",
+          "running": "Running"
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

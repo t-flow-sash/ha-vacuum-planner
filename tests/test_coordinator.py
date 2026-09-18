@@ -73,3 +73,27 @@ def test_runtime_data_state_tracks_coordinator_command() -> None:
     )
 
     assert runtime_data.state is updated
+
+
+def test_command_notifies_listener_after_publishing_persisted_state() -> None:
+    async def exercise() -> list[PlannerState]:
+        initial = planner_state()
+        store = RecordingStore()
+        coordinator = PlannerCoordinator(initial, store)
+        observed: list[PlannerState] = []
+        coordinator.async_add_listener(lambda: observed.append(coordinator.state))
+
+        updated = await coordinator.async_command(
+            lambda state: replace(
+                state,
+                ledger=replace(state.ledger, revision=state.ledger.revision + 1),
+            )
+        )
+
+        assert updated is coordinator.state
+        return observed
+
+    observed = asyncio.run(exercise())
+
+    assert len(observed) == 1
+    assert observed[0].ledger.revision == 1

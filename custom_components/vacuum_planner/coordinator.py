@@ -25,11 +25,21 @@ class PlannerCoordinator:
         self._state = state
         self._store = store
         self._command_lock = asyncio.Lock()
+        self._listeners: set[Callable[[], None]] = set()
 
     @property
     def state(self) -> PlannerState:
         """Return the current in-memory projection without performing I/O."""
         return self._state
+
+    def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Subscribe to successfully persisted state changes."""
+        self._listeners.add(listener)
+
+        def remove_listener() -> None:
+            self._listeners.discard(listener)
+
+        return remove_listener
 
     async def async_command(
         self,
@@ -42,4 +52,6 @@ class PlannerCoordinator:
                 return self._state
             await self._store.async_save(updated)
             self._state = updated
+            for listener in tuple(self._listeners):
+                listener()
             return updated

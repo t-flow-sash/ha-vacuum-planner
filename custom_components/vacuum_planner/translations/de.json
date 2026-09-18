@@ -28,6 +28,21 @@
       }
     }
   },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "attention": "Eingriff erforderlich",
+          "committing": "Wird übertragen",
+          "idle": "Inaktiv",
+          "paused": "Pausiert",
+          "ready": "Bereit",
+          "running": "Läuft"
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {
