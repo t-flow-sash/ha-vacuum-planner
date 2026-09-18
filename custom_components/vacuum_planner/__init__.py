@@ -39,6 +39,7 @@ from .domain.models import (
 from .domain.planning import AreaBinding, PlanningValidationError, build_due_snapshot
 from .domain.queue import (
     StartResult,
+    StartStatus,
     begin_native_batch_commit,
     quarantine_ambiguous_dispatches,
     quarantine_block_dispatch,
@@ -230,6 +231,7 @@ async def _async_dispatch_created_block(  # noqa: C901
     result: StartResult,
     context: Context,
     *,
+    commit_started: bool = False,
     clock: Callable[[], datetime] = _utcnow,
 ) -> PlannerState:
     """Persist the native batch boundary before and after its HA service call."""
@@ -272,7 +274,8 @@ async def _async_dispatch_created_block(  # noqa: C901
             ledger=begin_native_batch_commit(state.ledger, block_id, sent_at),
         )
 
-    await coordinator.async_command(begin_commit)
+    if not commit_started:
+        await coordinator.async_command(begin_commit)
     adapter = NativeAreaAdapter(hass, runtime_data.vacuum_entity_id)
     try:
         await adapter.async_dispatch(tuple(job.area_id for job in jobs), context)
@@ -310,11 +313,11 @@ async def _async_dispatch_created_block(  # noqa: C901
         ) from err
 
 
-def _register_start_next_action(hass: HomeAssistant) -> None:
+def _register_start_next_action(hass: HomeAssistant) -> None:  # noqa: C901
     """Register safe, idempotent one-tap planning and optional native dispatch."""
     runtimes = hass.data[DOMAIN]
 
-    async def async_start_next(call: object) -> dict[str, object]:
+    async def async_start_next(call: object) -> dict[str, object]:  # noqa: C901
         service_call = cast("_ServiceCall", call)
         call_data = service_call.data
         entry_id = cast("str", call_data[CONF_CONFIG_ENTRY_ID])
@@ -326,8 +329,9 @@ def _register_start_next_action(hass: HomeAssistant) -> None:
         if runtime_data.coordinator is None:
             raise _validation_error("Vacuum Planner state is unavailable")
         bindings = _resolve_area_bindings(hass, runtime_data)
-        evaluated_at = datetime.now(UTC)
+        evaluated_at = _utcnow()
         result: StartResult | None = None
+        dispatch_claimed = False
 
         def command(state: PlannerState) -> PlannerState:
             nonlocal result
@@ -336,6 +340,25 @@ def _register_start_next_action(hass: HomeAssistant) -> None:
             except PlanningValidationError as err:
                 raise _validation_error(str(err)) from err
             lane_id = snapshot.lane_id
+            recovery_block = next(
+                (
+                    block
+                    for block in state.ledger.blocks
+                    if block.lane_id == lane_id
+                    and block.state is BlockState.SEALED
+                    and block.dispatch_strategy is DispatchStrategy.NATIVE_BATCH
+                ),
+                None,
+            )
+            if not runtime_data.dry_run and recovery_block is not None:
+                jobs_by_id = {job.job_id: job for job in state.ledger.jobs}
+                result = StartResult(
+                    StartStatus.EXISTING,
+                    state.ledger,
+                    recovery_block,
+                    tuple(jobs_by_id[job_id] for job_id in recovery_block.job_ids),
+                )
+                return state
             result = start_due_block(
                 state.ledger,
                 snapshot,
@@ -357,12 +380,42 @@ def _register_start_next_action(hass: HomeAssistant) -> None:
         updated = await runtime_data.coordinator.async_command(command)
         if result is None:
             raise RuntimeError("start_next command returned no result")
-        if not runtime_data.dry_run and result.status.value == "created":
+        start_result = result
+
+        def claim_dispatch(state: PlannerState) -> PlannerState:
+            nonlocal dispatch_claimed
+            if start_result.block is None or runtime_data.dry_run:
+                return state
+            block = next(
+                (
+                    item
+                    for item in state.ledger.blocks
+                    if item.block_id == start_result.block.block_id
+                ),
+                None,
+            )
+            if (
+                block is None
+                or block.state is not BlockState.SEALED
+                or block.dispatch_strategy is not DispatchStrategy.NATIVE_BATCH
+            ):
+                return state
+            dispatch_claimed = True
+            return replace(
+                state,
+                ledger=begin_native_batch_commit(
+                    state.ledger, block.block_id, evaluated_at
+                ),
+            )
+
+        updated = await runtime_data.coordinator.async_command(claim_dispatch)
+        if dispatch_claimed:
             updated = await _async_dispatch_created_block(
                 hass,
                 runtime_data,
                 result,
                 service_call.context,
+                commit_started=True,
             )
         return {
             "status": result.status.value,
