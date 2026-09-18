@@ -17,6 +17,7 @@ from custom_components.vacuum_planner.const import (
     DOMAIN,
     VacuumPlannerRuntimeData,
 )
+from custom_components.vacuum_planner.coordinator import PlannerCoordinator
 from custom_components.vacuum_planner.domain.models import (
     BlockGuarantee,
     BlockState,
@@ -272,6 +273,229 @@ def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(
     assert len(saved) == 2  # initial state and one successful command
     assert hardware_calls == []
 
+
+def test_start_next_live_dispatch_persists_before_native_service_call(  # noqa: PLR0915
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: dict[
+        str,
+        Callable[[object], Coroutine[object, object, dict[str, object]]],
+    ] = {}
+    events: list[tuple[str, object]] = []
+    service_call_context = object()
+
+    class EmptyHAStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def async_load(self) -> None:
+            return None
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            events.append(("save", data))
+
+    class Services:
+        def async_register(
+            self,
+            domain: str,
+            service: str,
+            handler: Callable[[object], Coroutine[object, object, dict[str, object]]],
+            **_kwargs: object,
+        ) -> None:
+            registered[f"{domain}.{service}"] = handler
+
+        async def async_call(
+            self,
+            domain: str,
+            service: str,
+            service_data: dict[str, object],
+            *,
+            target: dict[str, object],
+            blocking: bool,
+            context: object,
+        ) -> None:
+            events.append(
+                (
+                    "call",
+                    (domain, service, service_data, target, blocking, context),
+                )
+            )
+
+    registry_entry = SimpleNamespace(
+        id="vacuum-registry-entry",
+        entity_id="vacuum.downstairs",
+        options={
+            "vacuum": {
+                "area_mapping": {
+                    "kitchen": ["segment-7"],
+                    "hallway": ["segment-2"],
+                }
+            }
+        },
+    )
+    entity_registry = SimpleNamespace(async_get=lambda _value: registry_entry)
+    area_registry = SimpleNamespace(
+        async_get_area=lambda area_id: SimpleNamespace(id=area_id, name=area_id.title())
+    )
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    entity_registry_module = ModuleType("homeassistant.helpers.entity_registry")
+    area_registry_module = ModuleType("homeassistant.helpers.area_registry")
+    core_module = ModuleType("homeassistant.core")
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(storage_module)["Store"] = EmptyHAStore
+    vars(entity_registry_module)["async_get"] = lambda _hass: entity_registry
+    vars(area_registry_module)["async_get"] = lambda _hass: area_registry
+    vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
+    vars(exceptions_module)["ServiceValidationError"] = ValueError
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(helpers_module)["storage"] = storage_module
+    vars(helpers_module)["entity_registry"] = entity_registry_module
+    vars(helpers_module)["area_registry"] = area_registry_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.helpers.entity_registry", entity_registry_module
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.area_registry", area_registry_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+
+    hass = SimpleNamespace(
+        data={},
+        services=Services(),
+        states=SimpleNamespace(
+            get=lambda _entity_id: SimpleNamespace(
+                state="idle", attributes={"supported_features": 1024}
+            )
+        ),
+    )
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={
+            CONF_VACUUM_ENTITY_ID: "vacuum.downstairs",
+            CONF_AREA_IDS: ["kitchen", "hallway"],
+        },
+        options={"dry_run": False},
+        unique_id="vacuum-registry-entry",
+        runtime_data=None,
+    )
+
+    assert asyncio.run(integration.async_setup(hass, {})) is True
+    assert asyncio.run(async_setup_entry(hass, entry)) is True
+    events.clear()
+
+    response = asyncio.run(
+        registered["vacuum_planner.start_next"](
+            SimpleNamespace(
+                data={"config_entry_id": entry.entry_id},
+                context=service_call_context,
+            )
+        )
+    )
+
+    assert [event[0] for event in events] == ["save", "save", "call", "save"]
+    committing_payload = events[1][1]
+    accepted_payload = events[3][1]
+    assert isinstance(committing_payload, dict)
+    assert isinstance(accepted_payload, dict)
+    committing = deserialize_planner_state(committing_payload)
+    accepted = deserialize_planner_state(accepted_payload)
+    assert committing.ledger.blocks[0].state is BlockState.COMMITTING
+    assert accepted.ledger.blocks[0].state is BlockState.COMMITTED
+    assert {job.state for job in accepted.ledger.jobs} == {JobState.ACCEPTED}
+    assert events[2][1] == (
+        "vacuum",
+        "clean_area",
+        {"cleaning_area_id": ["hallway", "kitchen"]},
+        {"entity_id": "vacuum.downstairs"},
+        True,
+        service_call_context,
+    )
+    assert response["status"] == "created"
+    assert response["dry_run"] is False
+
+
+def test_live_dispatch_failure_is_persisted_without_claiming_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+    saved: list[PlannerState] = []
+    service_call_context = object()
+
+    class Store:
+        async def async_save(self, state: PlannerState) -> None:
+            saved.append(state)
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError("service unavailable")
+
+    class StubServiceValidationError(Exception):
+        pass
+
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(exceptions_module)["ServiceValidationError"] = StubServiceValidationError
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs",
+        dry_run=False,
+        coordinator=coordinator,
+    )
+
+    with pytest.raises(StubServiceValidationError, match="dispatch failed"):
+        asyncio.run(
+            integration._async_dispatch_created_block(  # noqa: SLF001
+                SimpleNamespace(
+                    services=Services(),
+                    states=SimpleNamespace(
+                        get=lambda _entity_id: SimpleNamespace(
+                            state="idle", attributes={"supported_features": 1024}
+                        )
+                    ),
+                ),
+                runtime,
+                result,
+                service_call_context,
+                clock=lambda: at,
+            )
+        )
+
+    assert [state.ledger.blocks[0].state for state in saved] == [
+        BlockState.COMMITTING,
+        BlockState.FAILED,
+    ]
+    assert {job.state for job in coordinator.state.ledger.jobs} == {JobState.FAILED}
+    assert all(
+        job.error_code == "native_area_dispatch_failed"
+        for job in coordinator.state.ledger.jobs
+    )
 
 
 def test_setup_exposes_disabled_planning_option_in_runtime_data() -> None:

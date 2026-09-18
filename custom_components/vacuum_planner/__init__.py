@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import voluptuous as vol
 
+from .adapters.native_area import NativeAreaAdapter
 from .const import (
     CONF_AREA_IDS,
     CONF_CONFIG_ENTRY_ID,
@@ -25,7 +26,9 @@ from .const import (
 from .coordinator import PlannerCoordinator
 from .domain.models import (
     BlockGuarantee,
+    BlockState,
     DispatchStrategy,
+    JobState,
     PlannerState,
     PlanRevision,
     PreferredMode,
@@ -33,12 +36,19 @@ from .domain.models import (
     RoomPlan,
 )
 from .domain.planning import AreaBinding, PlanningValidationError, build_due_snapshot
-from .domain.queue import StartResult, quarantine_ambiguous_dispatches, start_due_block
+from .domain.queue import (
+    StartResult,
+    fail_block_commit,
+    quarantine_ambiguous_dispatches,
+    start_due_block,
+)
 from .store import PlannerStore, StoreBackend
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Context, HomeAssistant
 
 
 class _RegistryEntry(Protocol):
@@ -96,6 +106,7 @@ class _CoreModule(Protocol):
 
 class _ServiceCall(Protocol):
     data: dict[str, object]
+    context: Context
 
 
 def get_queue_response(runtime_data: VacuumPlannerRuntimeData) -> dict[str, object]:
@@ -161,6 +172,11 @@ def _validation_error(message: str) -> Exception:
     return exceptions.ServiceValidationError(message)
 
 
+def _utcnow() -> datetime:
+    """Return the current UTC time at an injectable application boundary."""
+    return datetime.now(UTC)
+
+
 def _resolve_area_bindings(
     hass: HomeAssistant,
     runtime_data: VacuumPlannerRuntimeData,
@@ -206,20 +222,89 @@ def _resolve_area_bindings(
     return bindings
 
 
+async def _async_dispatch_created_block(
+    hass: HomeAssistant,
+    runtime_data: VacuumPlannerRuntimeData,
+    result: StartResult,
+    context: Context,
+    *,
+    clock: Callable[[], datetime] = _utcnow,
+) -> PlannerState:
+    """Persist the native batch boundary before and after its HA service call."""
+    if result.block is None:
+        raise RuntimeError("created start has no block")
+    if runtime_data.coordinator is None:
+        raise RuntimeError("created start has no coordinator")
+    block_id = result.block.block_id
+    jobs = result.jobs
+
+    def begin_commit(state: PlannerState) -> PlannerState:
+        return replace(
+            state,
+            ledger=state.ledger.replace_block_state(
+                block_id,
+                BlockState.COMMITTING,
+                clock(),
+            ),
+        )
+
+    await runtime_data.coordinator.async_command(begin_commit)
+    adapter = NativeAreaAdapter(hass, runtime_data.vacuum_entity_id)
+    try:
+        await adapter.async_dispatch(tuple(job.area_id for job in jobs), context)
+    except Exception as err:
+        failed_at = clock()
+
+        def record_failure(state: PlannerState) -> PlannerState:
+            return replace(
+                state,
+                ledger=fail_block_commit(
+                    state.ledger,
+                    block_id,
+                    failed_at,
+                    error_code="native_area_dispatch_failed",
+                ),
+            )
+
+        await runtime_data.coordinator.async_command(record_failure)
+        raise _validation_error("Native area dispatch failed") from err
+    accepted_at = clock()
+
+    def record_acceptance(state: PlannerState) -> PlannerState:
+        ledger = state.ledger.replace_block_state(
+            block_id,
+            BlockState.COMMITTED,
+            accepted_at,
+        )
+        for job in jobs:
+            ledger = ledger.replace_job_state(
+                job.job_id,
+                JobState.DISPATCHING,
+                accepted_at,
+            )
+            ledger = ledger.replace_job_state(
+                job.job_id,
+                JobState.ACCEPTED,
+                accepted_at,
+            )
+        return replace(state, ledger=ledger)
+
+    return await runtime_data.coordinator.async_command(record_acceptance)
+
+
 def _register_start_next_action(hass: HomeAssistant) -> None:
-    """Register safe, idempotent one-tap planning without device dispatch."""
+    """Register safe, idempotent one-tap planning and optional native dispatch."""
     runtimes = hass.data[DOMAIN]
 
     async def async_start_next(call: object) -> dict[str, object]:
-        call_data = cast("_ServiceCall", call).data
+        service_call = cast("_ServiceCall", call)
+        call_data = service_call.data
         entry_id = cast("str", call_data[CONF_CONFIG_ENTRY_ID])
         runtime_data = cast("dict[str, VacuumPlannerRuntimeData]", runtimes).get(entry_id)
         if runtime_data is None:
             raise _validation_error("Vacuum Planner entry is not loaded")
         if not runtime_data.planning_enabled:
             raise _validation_error("Vacuum Planner is paused")
-        if not runtime_data.dry_run:
-            raise _validation_error("Live dispatch is not available in this beta")
         if runtime_data.coordinator is None:
             raise _validation_error("Vacuum Planner state is unavailable")
         bindings = _resolve_area_bindings(hass, runtime_data)
@@ -240,7 +325,11 @@ def _register_start_next_action(hass: HomeAssistant) -> None:
                 f"start_next:{state.plan_revision.revision_id}:{evaluated_at.date().isoformat()}",
                 evaluated_at,
                 lambda: str(uuid4()),
-                DispatchStrategy.PLANNER_SEQUENTIAL,
+                (
+                    DispatchStrategy.PLANNER_SEQUENTIAL
+                    if runtime_data.dry_run
+                    else DispatchStrategy.NATIVE_BATCH
+                ),
                 BlockGuarantee.PLANNER_ATOMIC,
             )
             if result.ledger == state.ledger:
@@ -250,12 +339,19 @@ def _register_start_next_action(hass: HomeAssistant) -> None:
         updated = await runtime_data.coordinator.async_command(command)
         if result is None:
             raise RuntimeError("start_next command returned no result")
+        if not runtime_data.dry_run and result.status.value == "created":
+            updated = await _async_dispatch_created_block(
+                hass,
+                runtime_data,
+                result,
+                service_call.context,
+            )
         return {
             "status": result.status.value,
             "block_id": result.block.block_id if result.block is not None else None,
             "area_ids": [job.area_id for job in result.jobs],
             "revision": updated.ledger.revision,
-            "dry_run": True,
+            "dry_run": runtime_data.dry_run,
         }
 
     core = cast("_CoreModule", import_module("homeassistant.core"))
