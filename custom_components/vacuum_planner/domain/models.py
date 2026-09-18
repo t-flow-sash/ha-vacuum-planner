@@ -483,6 +483,31 @@ def _validate_unique_queue_ids(
     return set(block_ids), {job.job_id: job for job in jobs}
 
 
+def _validate_block_job_compatibility(
+    block: QueueBlock,
+    block_jobs: list[QueueJob],
+) -> None:
+    """Reject externally active jobs before their permitted commit boundary."""
+    active_states = {
+        JobState.DISPATCHING,
+        JobState.ACCEPTED,
+        JobState.RUNNING,
+        JobState.UNCERTAIN,
+    }
+    incompatible_states = (
+        active_states
+        if block.state in {BlockState.DRAFT, BlockState.VALIDATING, BlockState.SEALED}
+        else active_states - {JobState.DISPATCHING}
+        if block.state is BlockState.COMMITTING
+        and block.dispatch_strategy is DispatchStrategy.NATIVE_BATCH
+        else active_states
+        if block.state is BlockState.COMMITTING
+        else set()
+    )
+    if any(job.state in incompatible_states for job in block_jobs):
+        raise ValueError("job state is incompatible with parent block")
+
+
 def _validate_ledger_references(
     blocks: tuple[QueueBlock, ...], jobs: tuple[QueueJob, ...]
 ) -> None:
@@ -505,22 +530,7 @@ def _validate_ledger_references(
             raise ValueError("job references wrong block_id")
         if [job.position for job in block_jobs] != list(range(len(block_jobs))):
             raise ValueError("job positions must be contiguous and ordered")
-        if block.state in {
-            BlockState.DRAFT,
-            BlockState.VALIDATING,
-            BlockState.SEALED,
-            BlockState.COMMITTING,
-        } and any(
-            job.state
-            in {
-                JobState.DISPATCHING,
-                JobState.ACCEPTED,
-                JobState.RUNNING,
-                JobState.UNCERTAIN,
-            }
-            for job in block_jobs
-        ):
-            raise ValueError("job state is incompatible with parent block")
+        _validate_block_job_compatibility(block, block_jobs)
         _validate_terminal_block_result(block.state, block_jobs)
         if block.state in _BLOCK_TERMINAL_STATES and any(
             job.state not in _JOB_TERMINAL_STATES for job in block_jobs

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -14,6 +15,8 @@ from custom_components.vacuum_planner.domain.models import (
 )
 from custom_components.vacuum_planner.domain.queue import (
     UncertainResolution,
+    begin_native_batch_commit,
+    quarantine_block_dispatch,
     resolve_uncertain_job,
     start_due_block,
 )
@@ -106,6 +109,25 @@ def test_dispatch_requires_successfully_committed_parent(parent_state: BlockStat
 
     with pytest.raises(ValueError, match="committed parent block"):
         ledger.replace_job_state("id-2", JobState.DISPATCHING, NOW)
+
+
+def test_committing_dispatching_jobs_require_native_batch_strategy() -> None:
+    snapshot = PlanSnapshot(
+        "rev", "lane", NOW,
+        (SnapshotJob("area", "Area", (), Mode.VACUUM, 0, NOW),),
+    )
+    sealed = start_due_block(
+        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
+        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+    committing = begin_native_batch_commit(sealed, "id-1", NOW)
+    sequential_block = replace(
+        committing.blocks[0],
+        dispatch_strategy=DispatchStrategy.PLANNER_SEQUENTIAL,
+    )
+
+    with pytest.raises(ValueError, match="incompatible with parent block"):
+        replace(committing, blocks=(sequential_block,))
 
 
 def test_sequential_dispatch_waits_for_the_previous_job_to_complete() -> None:
@@ -218,6 +240,26 @@ def test_uncertain_job_can_only_continue_after_explicit_safe_retry_resolution() 
     assert resolved.blocks[0].state is BlockState.RUNNING
     retried = resolved.replace_job_state("id-2", JobState.DISPATCHING, NOW)
     assert retried.jobs[0].attempt == 2
+
+
+def test_precommit_native_batch_resolution_terminally_fails_the_block() -> None:
+    snapshot = PlanSnapshot(
+        "rev", "lane", NOW,
+        (SnapshotJob("area", "Area", (), Mode.VACUUM, 0, NOW),),
+    )
+    sealed = start_due_block(
+        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
+        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+    committing = begin_native_batch_commit(sealed, "id-1", NOW)
+    uncertain = quarantine_block_dispatch(committing, "id-1", NOW)
+
+    resolved = resolve_uncertain_job(
+        uncertain, "id-2", UncertainResolution.RETRY_SAFE, NOW
+    )
+
+    assert resolved.jobs[0].state is JobState.FAILED
+    assert resolved.blocks[0].state is BlockState.FAILED
 
 
 def test_terminal_block_transition_rejects_nonterminal_children() -> None:

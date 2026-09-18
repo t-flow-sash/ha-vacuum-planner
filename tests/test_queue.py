@@ -156,6 +156,51 @@ def test_failed_adapter_commit_atomically_fails_block_and_unsent_jobs() -> None:
     assert failed.revision == committing.revision + 1
 
 
+def test_native_batch_commit_rejects_a_sequential_dispatch_strategy() -> None:
+    started = start_due_block(
+        QueueLedger.empty(), snapshot("kitchen"), "lane", "today", NOW,
+        IDs("block-1", "job-1"), DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+
+    with pytest.raises(ValueError, match="native batch strategy"):
+        queue_commands.begin_native_batch_commit(started, "block-1", NOW)
+
+
+def test_dispatch_quarantine_changes_only_the_target_block() -> None:
+    first_snapshot = PlanSnapshot(
+        "rev-1", "lane-1", NOW,
+        (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 0, NOW),),
+    )
+    first = start_due_block(
+        QueueLedger.empty(), first_snapshot, "lane-1", "first", NOW,
+        IDs("block-1", "job-1"), DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+    second_snapshot = PlanSnapshot(
+        "rev-1", "lane-2", NOW,
+        (SnapshotJob("hall", "Hall", (), Mode.VACUUM, 0, NOW),),
+    )
+    second = start_due_block(
+        first, second_snapshot, "lane-2", "second", NOW,
+        IDs("block-2", "job-2"), DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    ).ledger
+    committing = queue_commands.begin_native_batch_commit(second, "block-1", NOW)
+    committing = queue_commands.begin_native_batch_commit(committing, "block-2", NOW)
+
+    quarantined = queue_commands.quarantine_block_dispatch(committing, "block-1", NOW)
+
+    assert [block.state for block in quarantined.blocks] == [
+        BlockState.UNCERTAIN,
+        BlockState.COMMITTING,
+    ]
+    assert [job.state for job in quarantined.jobs] == [
+        JobState.UNCERTAIN,
+        JobState.DISPATCHING,
+    ]
+
+
 def test_repeated_start_returns_same_open_block_despite_stale_revision() -> None:
     first_ids = IDs("block-1", "job-1")
     first = start_due_block(

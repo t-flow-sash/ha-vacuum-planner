@@ -315,6 +315,85 @@ def fail_block_commit(
     )
 
 
+def begin_native_batch_commit(
+    ledger: QueueLedger,
+    block_id: str,
+    sent_at: datetime,
+) -> QueueLedger:
+    """Atomically persist native-batch dispatch intent before the external call."""
+    block = next((item for item in ledger.blocks if item.block_id == block_id), None)
+    if block is None:
+        raise KeyError(block_id)
+    if block.state is not BlockState.SEALED:
+        raise ValueError("native batch commit requires a sealed block")
+    if block.dispatch_strategy is not DispatchStrategy.NATIVE_BATCH:
+        raise ValueError("native batch commit requires native batch strategy")
+    if any(
+        item.lane_id == block.lane_id
+        and item.created_at <= block.created_at
+        and item.block_id != block.block_id
+        and item.state not in _TERMINAL_BLOCK_STATES
+        for item in ledger.blocks
+    ):
+        raise ValueError("earlier lane block must be terminal before native batch commit")
+    block_jobs = tuple(job for job in ledger.jobs if job.block_id == block_id)
+    if not block_jobs or any(job.state is not JobState.PENDING for job in block_jobs):
+        raise ValueError("native batch commit requires pending jobs")
+    committing = replace(block, state=BlockState.COMMITTING)
+    dispatching = {
+        job.job_id: replace(
+            job,
+            state=JobState.DISPATCHING,
+            attempt=job.attempt + 1,
+            sent_at=sent_at,
+        )
+        for job in block_jobs
+    }
+    return replace(
+        ledger,
+        revision=ledger.revision + 1,
+        blocks=tuple(
+            committing if item.block_id == block_id else item for item in ledger.blocks
+        ),
+        jobs=tuple(dispatching.get(job.job_id, job) for job in ledger.jobs),
+    )
+
+
+def quarantine_block_dispatch(
+    ledger: QueueLedger,
+    block_id: str,
+    reconciled_at: datetime,
+) -> QueueLedger:
+    """Quarantine only one ambiguous native-batch dispatch after an exception."""
+    block = next((item for item in ledger.blocks if item.block_id == block_id), None)
+    if block is None:
+        raise KeyError(block_id)
+    if block.state is not BlockState.COMMITTING:
+        raise ValueError("dispatch quarantine requires a committing block")
+    if block.dispatch_strategy is not DispatchStrategy.NATIVE_BATCH:
+        raise ValueError("dispatch quarantine requires native batch strategy")
+    block_jobs = tuple(job for job in ledger.jobs if job.block_id == block_id)
+    if not block_jobs or any(job.state is not JobState.DISPATCHING for job in block_jobs):
+        raise ValueError("dispatch quarantine requires dispatching jobs")
+    return replace(
+        ledger,
+        revision=ledger.revision + 1,
+        blocks=tuple(
+            replace(item, state=BlockState.UNCERTAIN)
+            if item.block_id == block_id
+            else item
+            for item in ledger.blocks
+        ),
+        jobs=tuple(
+            replace(job, state=JobState.UNCERTAIN)
+            if job.block_id == block_id
+            else job
+            for job in ledger.jobs
+        ),
+        last_reconciled_at=reconciled_at,
+    )
+
+
 def enqueue_area(
     ledger: QueueLedger,
     lane_id: str,
@@ -428,12 +507,26 @@ def resolve_uncertain_job(
         and (item.state is JobState.UNCERTAIN or _is_uncorrelated_active(item))
         for item in jobs
     )
-    resumed_state = (
-        BlockState.UNCERTAIN
-        if has_remaining_uncertainty
-        else BlockState.RUNNING if block.committed_at is not None else BlockState.COMMITTING
-    )
-    resumed_block = replace(block, state=resumed_state)
+    if has_remaining_uncertainty:
+        resumed_block = replace(block, state=BlockState.UNCERTAIN)
+    elif (
+        block.dispatch_strategy is DispatchStrategy.NATIVE_BATCH
+        and block.committed_at is None
+    ):
+        resumed_block = replace(
+            block,
+            state=BlockState.FAILED,
+            completed_at=resolved_at,
+        )
+    else:
+        resumed_block = replace(
+            block,
+            state=(
+                BlockState.RUNNING
+                if block.committed_at is not None
+                else BlockState.COMMITTING
+            ),
+        )
     return replace(
         ledger,
         revision=ledger.revision + 1,

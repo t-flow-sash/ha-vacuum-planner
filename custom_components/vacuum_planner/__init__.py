@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -38,8 +39,9 @@ from .domain.models import (
 from .domain.planning import AreaBinding, PlanningValidationError, build_due_snapshot
 from .domain.queue import (
     StartResult,
-    fail_block_commit,
+    begin_native_batch_commit,
     quarantine_ambiguous_dispatches,
+    quarantine_block_dispatch,
     start_due_block,
 )
 from .store import PlannerStore, StoreBackend
@@ -222,7 +224,7 @@ def _resolve_area_bindings(
     return bindings
 
 
-async def _async_dispatch_created_block(
+async def _async_dispatch_created_block(  # noqa: C901
     hass: HomeAssistant,
     runtime_data: VacuumPlannerRuntimeData,
     result: StartResult,
@@ -233,40 +235,52 @@ async def _async_dispatch_created_block(
     """Persist the native batch boundary before and after its HA service call."""
     if result.block is None:
         raise RuntimeError("created start has no block")
-    if runtime_data.coordinator is None:
+    coordinator = runtime_data.coordinator
+    if coordinator is None:
         raise RuntimeError("created start has no coordinator")
     block_id = result.block.block_id
     jobs = result.jobs
 
-    def begin_commit(state: PlannerState) -> PlannerState:
-        return replace(
-            state,
-            ledger=state.ledger.replace_block_state(
-                block_id,
-                BlockState.COMMITTING,
-                clock(),
-            ),
-        )
+    async def async_quarantine_dispatch() -> None:
+        reconciled_at = clock()
 
-    await runtime_data.coordinator.async_command(begin_commit)
-    adapter = NativeAreaAdapter(hass, runtime_data.vacuum_entity_id)
-    try:
-        await adapter.async_dispatch(tuple(job.area_id for job in jobs), context)
-    except Exception as err:
-        failed_at = clock()
-
-        def record_failure(state: PlannerState) -> PlannerState:
+        def record_uncertain(state: PlannerState) -> PlannerState:
             return replace(
                 state,
-                ledger=fail_block_commit(
+                ledger=quarantine_block_dispatch(
                     state.ledger,
                     block_id,
-                    failed_at,
-                    error_code="native_area_dispatch_failed",
+                    reconciled_at,
                 ),
             )
 
-        await runtime_data.coordinator.async_command(record_failure)
+        quarantine_task = asyncio.create_task(coordinator.async_command(record_uncertain))
+        deferred_cancellation: asyncio.CancelledError | None = None
+        while not quarantine_task.done():
+            try:
+                await asyncio.shield(quarantine_task)
+            except asyncio.CancelledError as err:
+                deferred_cancellation = err
+        quarantine_task.result()
+        if deferred_cancellation is not None:
+            raise deferred_cancellation
+
+    def begin_commit(state: PlannerState) -> PlannerState:
+        sent_at = clock()
+        return replace(
+            state,
+            ledger=begin_native_batch_commit(state.ledger, block_id, sent_at),
+        )
+
+    await coordinator.async_command(begin_commit)
+    adapter = NativeAreaAdapter(hass, runtime_data.vacuum_entity_id)
+    try:
+        await adapter.async_dispatch(tuple(job.area_id for job in jobs), context)
+    except asyncio.CancelledError:
+        await async_quarantine_dispatch()
+        raise
+    except Exception as err:
+        await async_quarantine_dispatch()
         raise _validation_error("Native area dispatch failed") from err
     accepted_at = clock()
 
@@ -279,17 +293,21 @@ async def _async_dispatch_created_block(
         for job in jobs:
             ledger = ledger.replace_job_state(
                 job.job_id,
-                JobState.DISPATCHING,
-                accepted_at,
-            )
-            ledger = ledger.replace_job_state(
-                job.job_id,
                 JobState.ACCEPTED,
                 accepted_at,
             )
         return replace(state, ledger=ledger)
 
-    return await runtime_data.coordinator.async_command(record_acceptance)
+    try:
+        return await coordinator.async_command(record_acceptance)
+    except asyncio.CancelledError:
+        await async_quarantine_dispatch()
+        raise
+    except Exception as err:
+        await async_quarantine_dispatch()
+        raise _validation_error(
+            "Native area dispatch acceptance could not be persisted"
+        ) from err
 
 
 def _register_start_next_action(hass: HomeAssistant) -> None:

@@ -421,7 +421,7 @@ def test_start_next_live_dispatch_persists_before_native_service_call(  # noqa: 
     assert response["dry_run"] is False
 
 
-def test_live_dispatch_failure_is_persisted_without_claiming_acceptance(
+def test_live_dispatch_exception_after_side_effect_is_quarantined_as_uncertain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
@@ -489,13 +489,322 @@ def test_live_dispatch_failure_is_persisted_without_claiming_acceptance(
 
     assert [state.ledger.blocks[0].state for state in saved] == [
         BlockState.COMMITTING,
-        BlockState.FAILED,
+        BlockState.UNCERTAIN,
     ]
-    assert {job.state for job in coordinator.state.ledger.jobs} == {JobState.FAILED}
-    assert all(
-        job.error_code == "native_area_dispatch_failed"
-        for job in coordinator.state.ledger.jobs
+    assert {job.state for job in coordinator.state.ledger.jobs} == {JobState.UNCERTAIN}
+    assert all(job.sent_at == at for job in coordinator.state.ledger.jobs)
+
+
+def test_live_dispatch_cancellation_is_quarantined_before_reraising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+    saved: list[PlannerState] = []
+
+    class Store:
+        async def async_save(self, state: PlannerState) -> None:
+            saved.append(state)
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            raise asyncio.CancelledError
+
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs",
+        dry_run=False,
+        coordinator=coordinator,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            integration._async_dispatch_created_block(  # noqa: SLF001
+                SimpleNamespace(
+                    services=Services(),
+                    states=SimpleNamespace(
+                        get=lambda _entity_id: SimpleNamespace(
+                            state="idle", attributes={"supported_features": 1024}
+                        )
+                    ),
+                ),
+                runtime,
+                result,
+                object(),
+                clock=lambda: at,
+            )
+        )
+
+    assert [state.ledger.blocks[0].state for state in saved] == [
+        BlockState.COMMITTING,
+        BlockState.UNCERTAIN,
+    ]
+    assert {job.state for job in coordinator.state.ledger.jobs} == {JobState.UNCERTAIN}
+
+
+def test_live_dispatch_double_cancellation_waits_for_blocked_quarantine_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+    saved: list[PlannerState] = []
+    service_started = asyncio.Event()
+    quarantine_save_started = asyncio.Event()
+    release_quarantine_save = asyncio.Event()
+    save_attempt = 0
+
+    class Store:
+        async def async_save(self, state: PlannerState) -> None:
+            nonlocal save_attempt
+            save_attempt += 1
+            if save_attempt == 2:
+                quarantine_save_started.set()
+                await release_quarantine_save.wait()
+            saved.append(state)
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            service_started.set()
+            await asyncio.Event().wait()
+
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs",
+        dry_run=False,
+        coordinator=coordinator,
+    )
+
+    async def exercise_double_cancellation() -> None:
+        dispatch = asyncio.create_task(
+            integration._async_dispatch_created_block(  # noqa: SLF001
+                SimpleNamespace(
+                    services=Services(),
+                    states=SimpleNamespace(
+                        get=lambda _entity_id: SimpleNamespace(
+                            state="idle", attributes={"supported_features": 1024}
+                        )
+                    ),
+                ),
+                runtime,
+                result,
+                object(),
+                clock=lambda: at,
+            )
+        )
+        await service_started.wait()
+        dispatch.cancel()
+        await quarantine_save_started.wait()
+        dispatch.cancel()
+        await asyncio.sleep(0)
+
+        assert not dispatch.done()
+        release_quarantine_save.set()
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch
+
+    asyncio.run(exercise_double_cancellation())
+
+    assert [state.ledger.blocks[0].state for state in saved] == [
+        BlockState.COMMITTING,
+        BlockState.UNCERTAIN,
+    ]
+    assert {job.state for job in coordinator.state.ledger.jobs} == {JobState.UNCERTAIN}
+
+
+def test_live_dispatch_cancellation_during_acceptance_is_quarantined(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+    saved: list[PlannerState] = []
+    save_attempt = 0
+
+    class Store:
+        async def async_save(self, state: PlannerState) -> None:
+            nonlocal save_attempt
+            save_attempt += 1
+            if save_attempt == 2:
+                raise asyncio.CancelledError
+            saved.append(state)
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs",
+        dry_run=False,
+        coordinator=coordinator,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            integration._async_dispatch_created_block(  # noqa: SLF001
+                SimpleNamespace(
+                    services=Services(),
+                    states=SimpleNamespace(
+                        get=lambda _entity_id: SimpleNamespace(
+                            state="idle", attributes={"supported_features": 1024}
+                        )
+                    ),
+                ),
+                runtime,
+                result,
+                object(),
+                clock=lambda: at,
+            )
+        )
+
+    assert [state.ledger.blocks[0].state for state in saved] == [
+        BlockState.COMMITTING,
+        BlockState.UNCERTAIN,
+    ]
+    assert {job.state for job in coordinator.state.ledger.jobs} == {JobState.UNCERTAIN}
+
+
+def test_live_dispatch_acceptance_save_failure_is_quarantined_and_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+    saved: list[PlannerState] = []
+    save_attempt = 0
+    service_calls = 0
+
+    class Store:
+        async def async_save(self, state: PlannerState) -> None:
+            nonlocal save_attempt
+            save_attempt += 1
+            if save_attempt == 2:
+                raise OSError("acceptance storage unavailable")
+            saved.append(state)
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            nonlocal service_calls
+            service_calls += 1
+
+    class StubServiceValidationError(Exception):
+        pass
+
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(exceptions_module)["ServiceValidationError"] = StubServiceValidationError
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs",
+        dry_run=False,
+        coordinator=coordinator,
+    )
+
+    with pytest.raises(
+        StubServiceValidationError,
+        match="Native area dispatch acceptance could not be persisted",
+    ) as raised:
+        asyncio.run(
+            integration._async_dispatch_created_block(  # noqa: SLF001
+                SimpleNamespace(
+                    services=Services(),
+                    states=SimpleNamespace(
+                        get=lambda _entity_id: SimpleNamespace(
+                            state="idle", attributes={"supported_features": 1024}
+                        )
+                    ),
+                ),
+                runtime,
+                result,
+                object(),
+                clock=lambda: at,
+            )
+        )
+
+    assert service_calls == 1
+    assert isinstance(raised.value.__cause__, OSError)
+    assert str(raised.value.__cause__) == "acceptance storage unavailable"
+    assert save_attempt == 3
+    assert [state.ledger.blocks[0].state for state in saved] == [
+        BlockState.COMMITTING,
+        BlockState.UNCERTAIN,
+    ]
+    assert {job.state for job in saved[-1].ledger.jobs} == {JobState.UNCERTAIN}
+    assert coordinator.state == saved[-1]
 
 
 def test_setup_exposes_disabled_planning_option_in_runtime_data() -> None:
