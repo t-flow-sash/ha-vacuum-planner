@@ -17,6 +17,7 @@ CONF_DRY_RUN = "dry_run"
 CONF_PLANNING_ENABLED = "planning_enabled"
 CONF_CONFIG_ENTRY_ID = "config_entry_id"
 SERVICE_GET_QUEUE = "get_queue"
+SERVICE_START_NEXT = "start_next"
 DEFAULT_TITLE = "Vacuum Planner"
 
 

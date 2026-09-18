@@ -39,5 +39,27 @@
         "title": "Planner behavior"
       }
     }
+  },
+  "services": {
+    "get_queue": {
+      "description": "Returns the current persisted queue without changing planner state.",
+      "fields": {
+        "config_entry_id": {
+          "description": "Select the Vacuum Planner instance to read.",
+          "name": "Planner instance"
+        }
+      },
+      "name": "Get queue"
+    },
+    "start_next": {
+      "description": "Seals the currently due work as an idempotent dry-run block without controlling the vacuum.",
+      "fields": {
+        "config_entry_id": {
+          "description": "Select the Vacuum Planner instance to start.",
+          "name": "Planner instance"
+        }
+      },
+      "name": "Start next due work"
+    }
   }
 }

@@ -43,6 +43,16 @@ def test_hacs_brand_icon_is_a_256_pixel_png() -> None:
     assert (width, height) == (256, 256)
 
 
+def test_public_actions_have_ui_descriptions_and_config_entry_selectors() -> None:
+    services = (INTEGRATION_DIR / "services.yaml").read_text(encoding="utf-8")
+
+    assert "start_next:" in services
+    assert "get_queue:" in services
+    assert services.count("config_entry_id:") == 2
+    assert services.count("integration: vacuum_planner") == 2
+    assert services.count("required: true") == 2
+
+
 def translation_keys(value: object, prefix: str = "") -> set[str]:
     if not isinstance(value, dict):
         return {prefix}
@@ -76,6 +86,14 @@ def test_config_flow_has_complete_english_and_german_translations() -> None:
         "options.step.init.data.planning_enabled",
         "options.step.init.description",
         "options.step.init.title",
+        "services.get_queue.description",
+        "services.get_queue.fields.config_entry_id.description",
+        "services.get_queue.fields.config_entry_id.name",
+        "services.get_queue.name",
+        "services.start_next.description",
+        "services.start_next.fields.config_entry_id.description",
+        "services.start_next.fields.config_entry_id.name",
+        "services.start_next.name",
     }
     assert translation_keys(strings) == expected_keys
     assert english == strings

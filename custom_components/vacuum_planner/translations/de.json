@@ -39,5 +39,27 @@
         "title": "Planerverhalten"
       }
     }
+  },
+  "services": {
+    "get_queue": {
+      "description": "Gibt die aktuelle persistierte Warteschlange zurück, ohne den Planerzustand zu ändern.",
+      "fields": {
+        "config_entry_id": {
+          "description": "Wähle die auszulesende Vacuum-Planner-Instanz aus.",
+          "name": "Planerinstanz"
+        }
+      },
+      "name": "Warteschlange abrufen"
+    },
+    "start_next": {
+      "description": "Versiegelt die aktuell fälligen Aufgaben idempotent als Testblock, ohne den Saugroboter zu steuern.",
+      "fields": {
+        "config_entry_id": {
+          "description": "Wähle die zu startende Vacuum-Planner-Instanz aus.",
+          "name": "Planerinstanz"
+        }
+      },
+      "name": "Nächste fällige Aufgaben starten"
+    }
   }
 }

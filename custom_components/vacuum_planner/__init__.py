@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from importlib import import_module
@@ -18,11 +19,21 @@ from .const import (
     CONF_VACUUM_ENTITY_ID,
     DOMAIN,
     SERVICE_GET_QUEUE,
+    SERVICE_START_NEXT,
     VacuumPlannerRuntimeData,
 )
 from .coordinator import PlannerCoordinator
-from .domain.models import PlannerState, PlanRevision, PreferredMode, QueueLedger, RoomPlan
-from .domain.queue import quarantine_ambiguous_dispatches
+from .domain.models import (
+    BlockGuarantee,
+    DispatchStrategy,
+    PlannerState,
+    PlanRevision,
+    PreferredMode,
+    QueueLedger,
+    RoomPlan,
+)
+from .domain.planning import AreaBinding, PlanningValidationError, build_due_snapshot
+from .domain.queue import StartResult, quarantine_ambiguous_dispatches, start_due_block
 from .store import PlannerStore, StoreBackend
 
 if TYPE_CHECKING:
@@ -32,6 +43,7 @@ if TYPE_CHECKING:
 
 class _RegistryEntry(Protocol):
     entity_id: str
+    options: Mapping[str, object]
 
 
 class _EntityRegistry(Protocol):
@@ -40,6 +52,18 @@ class _EntityRegistry(Protocol):
 
 class _EntityRegistryModule(Protocol):
     def async_get(self, hass: HomeAssistant) -> _EntityRegistry: ...
+
+
+class _AreaEntry(Protocol):
+    name: str
+
+
+class _AreaRegistry(Protocol):
+    def async_get_area(self, area_id: str) -> _AreaEntry | None: ...
+
+
+class _AreaRegistryModule(Protocol):
+    def async_get(self, hass: HomeAssistant) -> _AreaRegistry: ...
 
 
 class _StoreFactory(Protocol):
@@ -132,10 +156,123 @@ def _register_get_queue_action(hass: HomeAssistant) -> None:
     )
 
 
+def _validation_error(message: str) -> Exception:
+    exceptions = cast("_ExceptionsModule", import_module("homeassistant.exceptions"))
+    return exceptions.ServiceValidationError(message)
+
+
+def _resolve_area_bindings(
+    hass: HomeAssistant,
+    runtime_data: VacuumPlannerRuntimeData,
+) -> dict[str, AreaBinding]:
+    """Resolve current HA registry data into vendor-neutral snapshot bindings."""
+    er = cast(
+        "_EntityRegistryModule",
+        import_module("homeassistant.helpers.entity_registry"),
+    )
+    registry_entry = er.async_get(hass).async_get(runtime_data.vacuum_entity_id)
+    if registry_entry is None:
+        raise _validation_error("Configured vacuum entity is no longer registered")
+    vacuum_options = registry_entry.options.get("vacuum")
+    area_mapping = (
+        vacuum_options.get("area_mapping") if isinstance(vacuum_options, Mapping) else None
+    )
+    if not isinstance(area_mapping, Mapping):
+        raise _validation_error("Configured vacuum has no Home Assistant area mapping")
+    area_registry = cast(
+        "_AreaRegistryModule",
+        import_module("homeassistant.helpers.area_registry"),
+    ).async_get(hass)
+    state = runtime_data.state
+    if state is None:
+        raise _validation_error("Vacuum Planner state is unavailable")
+    bindings: dict[str, AreaBinding] = {}
+    for plan in state.plan_revision.room_plans:
+        segments = area_mapping.get(plan.area_id)
+        area = area_registry.async_get_area(plan.area_id)
+        if (
+            area is None
+            or not isinstance(segments, list)
+            or not segments
+            or any(not isinstance(segment, str) or not segment.strip() for segment in segments)
+        ):
+            raise _validation_error(f"Area {plan.area_id} has no valid vacuum mapping")
+        bindings[plan.area_id] = AreaBinding(
+            area_id=plan.area_id,
+            area_name=area.name,
+            adapter_target=tuple(segments),
+            supports_vacuum_and_mop=False,
+        )
+    return bindings
+
+
+def _register_start_next_action(hass: HomeAssistant) -> None:
+    """Register safe, idempotent one-tap planning without device dispatch."""
+    runtimes = hass.data[DOMAIN]
+
+    async def async_start_next(call: object) -> dict[str, object]:
+        call_data = cast("_ServiceCall", call).data
+        entry_id = cast("str", call_data[CONF_CONFIG_ENTRY_ID])
+        runtime_data = cast("dict[str, VacuumPlannerRuntimeData]", runtimes).get(entry_id)
+        if runtime_data is None:
+            raise _validation_error("Vacuum Planner entry is not loaded")
+        if not runtime_data.planning_enabled:
+            raise _validation_error("Vacuum Planner is paused")
+        if not runtime_data.dry_run:
+            raise _validation_error("Live dispatch is not available in this beta")
+        if runtime_data.coordinator is None:
+            raise _validation_error("Vacuum Planner state is unavailable")
+        bindings = _resolve_area_bindings(hass, runtime_data)
+        evaluated_at = datetime.now(UTC)
+        result: StartResult | None = None
+
+        def command(state: PlannerState) -> PlannerState:
+            nonlocal result
+            try:
+                snapshot = build_due_snapshot(state.plan_revision, bindings, evaluated_at)
+            except PlanningValidationError as err:
+                raise _validation_error(str(err)) from err
+            lane_id = snapshot.lane_id
+            result = start_due_block(
+                state.ledger,
+                snapshot,
+                lane_id,
+                f"start_next:{state.plan_revision.revision_id}:{evaluated_at.date().isoformat()}",
+                evaluated_at,
+                lambda: str(uuid4()),
+                DispatchStrategy.PLANNER_SEQUENTIAL,
+                BlockGuarantee.PLANNER_ATOMIC,
+            )
+            if result.ledger == state.ledger:
+                return state
+            return replace(state, ledger=result.ledger)
+
+        updated = await runtime_data.coordinator.async_command(command)
+        if result is None:
+            raise RuntimeError("start_next command returned no result")
+        return {
+            "status": result.status.value,
+            "block_id": result.block.block_id if result.block is not None else None,
+            "area_ids": [job.area_id for job in result.jobs],
+            "revision": updated.ledger.revision,
+            "dry_run": True,
+        }
+
+    core = cast("_CoreModule", import_module("homeassistant.core"))
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_START_NEXT,
+        async_start_next,
+        schema=vol.Schema({vol.Required(CONF_CONFIG_ENTRY_ID): str}),
+        supports_response=core.SupportsResponse.ONLY,
+    )
+
+
 async def async_setup(hass: HomeAssistant, _config: object) -> bool:
     """Register integration actions independently of config-entry availability."""
     hass.data.setdefault(DOMAIN, {})
     _register_get_queue_action(hass)
+    _register_start_next_action(hass)
     return True
 
 

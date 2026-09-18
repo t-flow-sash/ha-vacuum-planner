@@ -169,6 +169,111 @@ def test_get_queue_action_rejects_an_unloaded_config_entry(
         asyncio.run(handler(SimpleNamespace(data={"config_entry_id": "missing"})))
 
 
+def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: dict[
+        str,
+        Callable[[object], Coroutine[object, object, dict[str, object]]],
+    ] = {}
+    saved: list[dict[str, Any]] = []
+    hardware_calls: list[object] = []
+
+    class EmptyHAStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def async_load(self) -> None:
+            return None
+
+        async def async_save(self, data: dict[str, Any]) -> None:
+            saved.append(data)
+
+    class Services:
+        def async_register(
+            self,
+            domain: str,
+            service: str,
+            handler: Callable[[object], Coroutine[object, object, dict[str, object]]],
+            **_kwargs: object,
+        ) -> None:
+            registered[f"{domain}.{service}"] = handler
+
+        async def async_call(self, *args: object, **kwargs: object) -> None:
+            hardware_calls.append((args, kwargs))
+
+    registry_entry = SimpleNamespace(
+        id="vacuum-registry-entry",
+        entity_id="vacuum.downstairs",
+        options={"vacuum": {"area_mapping": {"kitchen": ["segment-7"]}}},
+    )
+    entity_registry = SimpleNamespace(async_get=lambda _value: registry_entry)
+    area_registry = SimpleNamespace(
+        async_get_area=lambda area_id: SimpleNamespace(id=area_id, name="Kitchen")
+    )
+    homeassistant_module = ModuleType("homeassistant")
+    helpers_module = ModuleType("homeassistant.helpers")
+    storage_module = ModuleType("homeassistant.helpers.storage")
+    entity_registry_module = ModuleType("homeassistant.helpers.entity_registry")
+    area_registry_module = ModuleType("homeassistant.helpers.area_registry")
+    core_module = ModuleType("homeassistant.core")
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vars(storage_module)["Store"] = EmptyHAStore
+    vars(entity_registry_module)["async_get"] = lambda _hass: entity_registry
+    vars(area_registry_module)["async_get"] = lambda _hass: area_registry
+    vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
+    vars(exceptions_module)["ServiceValidationError"] = ValueError
+    vars(homeassistant_module)["helpers"] = helpers_module
+    vars(helpers_module)["storage"] = storage_module
+    vars(helpers_module)["entity_registry"] = entity_registry_module
+    vars(helpers_module)["area_registry"] = area_registry_module
+    monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers", helpers_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.storage", storage_module)
+    monkeypatch.setitem(
+        sys.modules, "homeassistant.helpers.entity_registry", entity_registry_module
+    )
+    monkeypatch.setitem(sys.modules, "homeassistant.helpers.area_registry", area_registry_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+
+    hass = SimpleNamespace(
+        data={},
+        services=Services(),
+        states=SimpleNamespace(
+            get=lambda _entity_id: SimpleNamespace(attributes={"supported_features": 1024})
+        ),
+    )
+    entry = SimpleNamespace(
+        entry_id="planner-entry-1",
+        data={
+            CONF_VACUUM_ENTITY_ID: "vacuum.downstairs",
+            CONF_AREA_IDS: ["kitchen"],
+        },
+        options={},
+        unique_id="vacuum-registry-entry",
+        runtime_data=None,
+    )
+
+    assert asyncio.run(integration.async_setup(hass, {})) is True
+    assert asyncio.run(async_setup_entry(hass, entry)) is True
+    handler = registered["vacuum_planner.start_next"]
+
+    first = asyncio.run(handler(SimpleNamespace(data={"config_entry_id": entry.entry_id})))
+    second = asyncio.run(handler(SimpleNamespace(data={"config_entry_id": entry.entry_id})))
+
+    assert first["status"] == "created"
+    assert second["status"] == "existing"
+    assert first["block_id"] == second["block_id"]
+    assert first["area_ids"] == ["kitchen"]
+    assert first["dry_run"] is True
+    assert len(entry.runtime_data.state.ledger.blocks) == 1
+    assert len(entry.runtime_data.state.ledger.jobs) == 1
+    assert len(saved) == 2  # initial state and one successful command
+    assert hardware_calls == []
+
+
+
 def test_setup_exposes_disabled_planning_option_in_runtime_data() -> None:
     hass = SimpleNamespace()
     entry = SimpleNamespace(

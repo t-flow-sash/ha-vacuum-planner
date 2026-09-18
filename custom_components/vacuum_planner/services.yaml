@@ -1,0 +1,15 @@
+start_next:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: vacuum_planner
+
+get_queue:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: vacuum_planner

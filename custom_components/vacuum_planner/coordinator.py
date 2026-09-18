@@ -38,6 +38,8 @@ class PlannerCoordinator:
         """Apply and atomically persist one command under the shared lock."""
         async with self._command_lock:
             updated = command(self._state)
+            if updated == self._state:
+                return self._state
             await self._store.async_save(updated)
             self._state = updated
             return updated
