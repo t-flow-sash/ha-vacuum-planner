@@ -1,6 +1,9 @@
 import asyncio
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime
+
+import pytest
 
 from custom_components.vacuum_planner.const import VacuumPlannerRuntimeData
 from custom_components.vacuum_planner.coordinator import PlannerCoordinator
@@ -97,3 +100,30 @@ def test_command_notifies_listener_after_publishing_persisted_state() -> None:
 
     assert len(observed) == 1
     assert observed[0].ledger.revision == 1
+
+
+def test_listener_failure_is_logged_without_failing_persisted_command(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    initial = planner_state()
+    store = RecordingStore()
+    coordinator = PlannerCoordinator(initial, store)
+
+    def broken_listener() -> None:
+        raise RuntimeError("listener exploded")
+
+    coordinator.async_add_listener(broken_listener)
+
+    with caplog.at_level(logging.ERROR):
+        updated = asyncio.run(
+            coordinator.async_command(
+                lambda state: replace(
+                    state,
+                    ledger=replace(state.ledger, revision=state.ledger.revision + 1),
+                )
+            )
+        )
+
+    assert store.saved == [updated]
+    assert coordinator.state is updated
+    assert "listener exploded" in caplog.text

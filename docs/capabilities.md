@@ -9,14 +9,14 @@ Kompatibilität wird anhand beobachtbarer Fähigkeiten, nicht anhand von Marken,
 | Tier | Mindestfähigkeiten | Nutzbarer Modus | Queue-/Blockgarantie | UI-Payoff |
 |---|---|---|---|---|
 | **T0 – Gesamtfläche** | generisches Start/Pause/Stop | gesamte Fläche, keine Räume | keine Raumblockgarantie | „Raumplanung nicht verfügbar“; optional klar getrennter Gesamtflächenmodus |
-| **T1 – Areas** | `CLEAN_AREA`, eindeutiges Area-Mapping, einzelner oder mehrfacher Area-Aufruf | raumbasierte Planung | Planner-Block atomar; Gerät ggf. sequentiell/emuliert | volle Planung, aber eingeschränkte Gerätequeue-/Fortschrittsanzeige |
-| **T2 – Batch** | geordneter Mehrraumauftrag und Moduswahl | Saugen und ggf. Saugen+Wischen | ein Geräteauftrag für den Block; Append ggf. nur im Planner | „Tagesblock als ein Auftrag“, Fortschritt abhängig von Telemetrie |
-| **T3 – Queue** | atomischer Batch-Commit, echtes Append, Queue-/Run-ID, Introspection | vollständiger Funktionsumfang | Planner- und Roboter-Atomizität belastbar | echte Gerätequeue, Recovery und Fortschritt mit hoher Sicherheit |
+| **T1 – Areas** | `CLEAN_AREA`, eindeutiges Area-Mapping | raumbasierte Planung | Ein-Job-Block vor Dispatch persistiert | öffentliche Beta-Basis |
+| **T2 – Batch** | zusätzliche Batch- und Modusfähigkeiten | nicht Teil des öffentlichen Beta-Vertrags | keine zusätzliche Zusage | reservierte Capability-Stufe |
+| **T3 – Queue** | Queue-/Run-ID und Introspection | nicht Teil des öffentlichen Beta-Vertrags | keine zusätzliche Zusage | reservierte Capability-Stufe |
 
 ### Zwei getrennte Garantien
 
-- **Planner-atomar:** Die Integration persistiert den unveränderlichen Tagesblock in einem Schritt; spätere Jobs stehen garantiert dahinter. Ab T1 lieferbar.
-- **Robot-atomar:** Das Gerät bzw. seine Integration bestätigt den kompletten Block als unteilbaren Queue-Auftrag und erlaubt danach Append. Nur ausweisen, wenn Adapter/Contract dies tatsächlich belegt (typischerweise T3).
+- **Planner-atomar:** Die Integration persistiert den unveränderlichen Ein-Job-Block vor dem externen Dispatch in einem Schritt. Ab T1 lieferbar.
+- **Robot-atomar:** Diese stärkere Gerätequeue-Garantie ist im ausgelieferten öffentlichen Beta-Pfad nicht belegt und wird dort nicht zugesagt.
 
 ## Autoritative Capability-Matrix
 
@@ -26,7 +26,7 @@ ordered_multi_area
 mode_vacuum
 mode_vacuum_and_mop
 atomic_device_commit
-append_device_queue
+
 queue_introspection
 per_area_progress
 run_correlation
@@ -50,15 +50,15 @@ Ein Vendor-Adapter darf nur den fehlenden Transport/Beobachtungsteil ergänzen. 
 
 ### `native_batch`
 
-Ein Aufruf enthält die geordnete Area-Liste. Das ist bevorzugt, beweist allein aber noch keine transaktionale Gerätequeue.
+Der Live-Pfad verwendet diesen internen Strategiewert auch für den einzelnen Job. Daraus folgt kein öffentlicher Batch- oder Gerätequeue-Vertrag.
 
 ### `planner_sequential`
 
-Der Planner sendet einen Raum nach bestätigtem Abschluss des vorherigen. Das bewahrt die logische Blockfolge, erzeugt aber keinen physischen Queueblock und kann zusätzliche Dock-/Startlatenz haben.
+Der öffentliche Beta-Pfad verwendet diesen Wert im Dry-run für den einzelnen materialisierten Job. Er verspricht keine automatische Folgeausführung.
 
 ### `device_queue`
 
-Der Adapter committed den Block atomar, erhält eine Run-/Queue-ID und kann danach Jobs anhängen. Nur diese Strategie darf in der UI als „in Gerätequeue übertragen“ bezeichnet werden.
+Dieser Wert ist im Domainmodell reserviert, wird vom öffentlichen Beta-Pfad aber nicht gewählt. Die Dokumentation leitet daraus keine Gerätequeue-Funktion ab.
 
 ## Modusregeln
 
@@ -83,7 +83,7 @@ Der Adapter committed den Block atomar, erhält eine Run-/Queue-ID und kann dana
 - keine partielle Übertragung nach Validierungsfehler;
 - geordnete Jobs bleiben geordnet;
 - `vacuum_and_mop` wird nur bei bestätigter Capability gesendet;
-- Commit-/Append-Ergebnisse werden korrekt normalisiert;
+- Commit-Ergebnisse werden korrekt normalisiert;
 - Timeout und temporäre Nichtverfügbarkeit beschädigen den Ledger nicht;
 - Neustart/Observation führt nie zu blindem Doppelstart;
 - fremde/manuelle Läufe werden als Interferenz behandelt;

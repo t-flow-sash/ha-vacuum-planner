@@ -108,8 +108,14 @@ def test_uncertain_parent_blocks_pending_job_dispatch() -> None:
         (SnapshotJob("kitchen", "Kitchen", 4, Mode.VACUUM, 0, NOW),),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTING, NOW)
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTED, NOW)
@@ -127,8 +133,14 @@ def test_explicit_safe_resolution_releases_pending_jobs_after_uncertain_restart(
         (SnapshotJob("kitchen", "Kitchen", 4, Mode.VACUUM, 0, NOW),),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTING, NOW)
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTED, NOW)
@@ -151,8 +163,14 @@ def test_uncertain_block_release_rejects_uncorrelated_active_child() -> None:
         (SnapshotJob("kitchen", "Kitchen", 4, Mode.VACUUM, 0, NOW),),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     for state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
         ledger = ledger.replace_block_state("id-1", state, NOW)
@@ -161,22 +179,28 @@ def test_uncertain_block_release_rejects_uncorrelated_active_child() -> None:
     ledger = ledger.replace_block_state("id-1", BlockState.UNCERTAIN, RESTARTED_AT)
 
     with pytest.raises(ValueError, match="uncorrelated active child"):
-        queue_commands.resolve_uncertain_block(
-            ledger, "id-1", UncertainResolution.RETRY_SAFE
-        )
+        queue_commands.resolve_uncertain_block(ledger, "id-1", UncertainResolution.RETRY_SAFE)
 
 
 def test_job_resolution_keeps_block_uncertain_for_uncorrelated_active_sibling() -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         tuple(
             SnapshotJob(f"area-{index}", f"Area {index}", index, Mode.VACUUM, 0, NOW)
             for index in range(2)
         ),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     for state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
         ledger = ledger.replace_block_state("id-1", state, NOW)
@@ -186,9 +210,7 @@ def test_job_resolution_keeps_block_uncertain_for_uncorrelated_active_sibling() 
     ledger = ledger.replace_job_state("id-2", JobState.UNCERTAIN, RESTARTED_AT)
     ledger = ledger.replace_block_state("id-1", BlockState.UNCERTAIN, RESTARTED_AT)
 
-    resolved = resolve_uncertain_job(
-        ledger, "id-2", UncertainResolution.RETRY_SAFE, RESTARTED_AT
-    )
+    resolved = resolve_uncertain_job(ledger, "id-2", UncertainResolution.RETRY_SAFE, RESTARTED_AT)
 
     assert resolved.blocks[0].state is BlockState.UNCERTAIN
     assert resolved.jobs[1].state is JobState.ACCEPTED
@@ -199,12 +221,20 @@ def test_restart_quarantines_all_active_states_without_external_correlation(
     ambiguous_state: JobState,
 ) -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         (SnapshotJob("kitchen", "Kitchen", 4, Mode.VACUUM, 0, NOW),),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     for state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
         ledger = ledger.replace_block_state("id-1", state, NOW)
@@ -223,19 +253,25 @@ def test_restart_quarantines_all_active_states_without_external_correlation(
 @pytest.mark.parametrize("invalid_token", ["", "   "])
 def test_restart_rejects_blank_job_correlation(invalid_token: str) -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         (SnapshotJob("kitchen", "Kitchen", 4, Mode.VACUUM, 0, NOW),),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     for state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
         ledger = ledger.replace_block_state("id-1", state, NOW)
     ledger = ledger.replace_job_state("id-2", JobState.DISPATCHING, NOW)
-    ledger = ledger.replace_job_state(
-        "id-2", JobState.ACCEPTED, NOW, adapter_token="temporary"
-    )
+    ledger = ledger.replace_job_state("id-2", JobState.ACCEPTED, NOW, adapter_token="temporary")
     ledger = replace(
         ledger,
         jobs=(replace(ledger.jobs[0], adapter_token=invalid_token),),
@@ -250,12 +286,20 @@ def test_restart_rejects_blank_job_correlation(invalid_token: str) -> None:
 @pytest.mark.parametrize("invalid_run_id", ["", "   "])
 def test_restart_rejects_blank_block_correlation(invalid_run_id: str) -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         (SnapshotJob("kitchen", "Kitchen", 4, Mode.VACUUM, 0, NOW),),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTING, NOW)
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTED, NOW)
@@ -271,15 +315,23 @@ def test_restart_rejects_blank_block_correlation(invalid_run_id: str) -> None:
 
 def test_recovery_preserves_correlated_job_when_sibling_dispatch_is_ambiguous() -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         tuple(
             SnapshotJob(f"area-{index}", f"Area {index}", index, Mode.VACUUM, 0, NOW)
             for index in range(2)
         ),
     )
     ledger = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     ledger = ledger.replace_block_state("id-1", BlockState.COMMITTING, NOW)
     ledger = ledger.replace_block_state(

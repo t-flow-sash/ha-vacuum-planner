@@ -1,0 +1,141 @@
+title: Vacuum Planner
+views:
+  - title: Saugplanung
+    path: vacuum-planner
+    icon: mdi:robot-vacuum
+    type: sections
+    max_columns: 2
+    sections:
+      - type: grid
+        title: Übersicht
+        cards:
+          - type: heading
+            heading: Vacuum Planner
+            icon: mdi:robot-vacuum
+          - type: tile
+            entity: sensor.vacuum_planner_status
+            name: Status
+            vertical: false
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: tile
+            entity: sensor.vacuum_planner_next_action
+            name: Nächste Aktion
+            vertical: false
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: tile
+            entity: sensor.vacuum_planner_pending_tasks
+            name: Offene Aufgaben
+            vertical: false
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: button
+            entity: button.vacuum_planner_start_next_due_task
+            name: Nächste Aufgabe starten
+            icon: mdi:play
+            show_state: false
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.vacuum_planner_start_next_due_task
+            hold_action:
+              action: more-info
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: binary_sensor.vacuum_planner_attention_required
+                state: "on"
+            card:
+              type: markdown
+              title: Eingriff erforderlich
+              content: >-
+                Der Planner meldet einen ungeklärten oder abgelehnten Lauf. Bitte
+                Warteschlange und Reparaturhinweise prüfen, bevor erneut gestartet wird.
+            grid_options:
+              columns: 12
+              rows: 2
+      - type: grid
+        title: Heutige Warteschlange
+        cards:
+          - type: markdown
+            title: Dynamische Queue
+            entity_id:
+              - sensor.vacuum_planner_queue
+            content: >-
+              {% set queue = state_attr('sensor.vacuum_planner_queue', 'items') or [] %}
+              {% if queue | count == 0 %}
+              _Keine Aufgaben in der Planner-Warteschlange._
+              {% else %}
+              {% for item in queue %}
+              {% set name = item.area_name | e %}
+              {% set mode = 'Saugen + Wischen' if item.mode == 'vacuum_and_mop' else 'Saugen' %}
+              {% if item.status == 'completed' %}
+              <span style="color: var(--disabled-text-color);">✓ **{{ name }}** · {{ mode }} · **Erledigt**</span>
+              {% elif item.status == 'running' %}
+              ▶ **{{ name }}** · {{ mode }} · **Läuft**
+              {% elif item.status == 'failed' %}
+              ⚠ **{{ name }}** · {{ mode }} · **Fehlgeschlagen**
+              {% elif item.status == 'uncertain' %}
+              ? **{{ name }}** · {{ mode }} · **Ungeklärt – prüfen**
+              {% elif item.status == 'cancelled' %}
+              ⊘ **{{ name }}** · {{ mode }} · **Abgebrochen**
+              {% elif item.status == 'skipped' %}
+              ↷ **{{ name }}** · {{ mode }} · **Übersprungen**
+              {% else %}
+              ○ **{{ name }}** · {{ mode }} · **{{ item.status | e }}**
+              {% endif %}
+
+              {% endfor %}
+              {% if state_attr('sensor.vacuum_planner_queue', 'truncated') %}
+              _Weitere Aufgaben sind vorhanden; die sichere Dashboard-Projektion zeigt maximal 20._
+              {% endif %}
+              {% endif %}
+            grid_options:
+              columns: 12
+              rows: 6
+      - type: grid
+        title: Steuerung und Diagnose
+        cards:
+          - type: tile
+            entity: switch.vacuum_planner_planning
+            name: Planung aktiv
+            vertical: false
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: button
+            entity: button.vacuum_planner_cancel_current_block
+            name: Aktuellen Block abbrechen
+            icon: mdi:cancel
+            show_state: false
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.vacuum_planner_cancel_current_block
+            hold_action:
+              action: more-info
+            grid_options:
+              columns: 6
+              rows: 2
+          - type: entities
+            title: Diagnose
+            show_header_toggle: false
+            entities:
+              - entity: binary_sensor.vacuum_planner_ready
+                name: Bereit
+              - entity: sensor.vacuum_planner_current_phase
+                name: Aktuelle Phase
+              - entity: sensor.vacuum_planner_queue
+                name: Queue-Größe
+            grid_options:
+              columns: 12
+              rows: 3

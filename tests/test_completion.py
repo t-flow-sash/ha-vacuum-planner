@@ -36,12 +36,8 @@ class IDs:
         return f"id-{self.index}"
 
 
-def running_job(
-    mode: Mode, *, parent_running: bool = True
-) -> tuple[QueueLedger, PlanRevision]:
-    preferred_mode = (
-        PreferredMode.VACUUM if mode is Mode.VACUUM else PreferredMode.VACUUM_AND_MOP
-    )
+def running_job(mode: Mode, *, parent_running: bool = True) -> tuple[QueueLedger, PlanRevision]:
+    preferred_mode = PreferredMode.VACUUM if mode is Mode.VACUUM else PreferredMode.VACUUM_AND_MOP
     revision = PlanRevision(
         "rev-1",
         NOW - timedelta(days=1),
@@ -127,9 +123,7 @@ def test_completed_job_and_advanced_plan_survive_one_restart_roundtrip() -> None
     restored = deserialize_planner_state(
         json.loads(
             json.dumps(
-                serialize_planner_state(
-                    PlannerState(completed.plan_revision, completed.ledger)
-                )
+                serialize_planner_state(PlannerState(completed.plan_revision, completed.ledger))
             )
         )
     )

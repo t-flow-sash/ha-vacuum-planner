@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "states": {
+    "empty": {
+      "planner_status": "idle",
+      "headline": "Heute ist nichts geplant",
+      "queue": []
+    },
+    "paused": {
+      "planner_status": "paused",
+      "headline": "Planung pausiert",
+      "queue": [
+        {"room": "Raum A", "planned": true, "state": "pending", "presentation": "normal"}
+      ]
+    },
+    "running": {
+      "planner_status": "running",
+      "headline": "Reinigung läuft",
+      "queue": [
+        {"room": "Raum A", "planned": true, "state": "running", "presentation": "accent"},
+        {"room": "Raum B", "planned": true, "state": "pending", "presentation": "normal"}
+      ]
+    },
+    "completed": {
+      "planner_status": "idle",
+      "headline": "Heutiger Plan erledigt",
+      "queue": [
+        {"room": "Raum A", "planned": true, "state": "completed", "presentation": "grey"}
+      ]
+    },
+    "failed": {
+      "planner_status": "attention",
+      "headline": "Reinigung fehlgeschlagen",
+      "queue": [
+        {"room": "Raum A", "planned": true, "state": "failed", "presentation": "error"}
+      ]
+    },
+    "uncertain": {
+      "planner_status": "attention",
+      "headline": "Status muss geprüft werden",
+      "queue": [
+        {"room": "Raum A", "planned": true, "state": "uncertain", "presentation": "warning"}
+      ]
+    }
+  }
+}

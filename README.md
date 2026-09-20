@@ -1,31 +1,63 @@
 # HA Vacuum Planner
 
-Herstellerbewusste, raumbasierte Saugerplanung für Home Assistant – ohne YAML-Zwang für Anwender.
+Herstellerneutraler, raumbasierter Planer für vorhandene Home-Assistant-Sauger – mit UI-Einrichtung, persistenter Queue und sicherem Dry-run als Standard.
 
-> **Projektstatus:** Architektur- und Spezifikationsphase. Noch keine Live-Tests und keine Änderungen an einer produktiven Home-Assistant-Instanz.
+> **Projektstatus: privater Release-Kandidat `v0.1.0-beta.1`.** Der primäre Installationsweg ist das authentifiziert bezogene, semantisch versionierte Release-ZIP mit SHA-256-Prüfung und anschließender Ordnerkopie. Das private Repository ist nicht über HACS installierbar; HACS kommt nur nach einer späteren öffentlichen Erreichbarkeit und ausdrücklichen Freigabe infrage. Es gibt noch keinen Tag oder Release. Die Integration wurde **noch nicht an einer produktiven Instanz oder realer Hardware erprobt**. Dry-run bleibt Standard; ein Live-Pilot ist nicht freigegeben.
 
-## Produktziel
+## Was der Beta-Kandidat liefert
 
-HA Vacuum Planner soll aus Home-Assistant-Räumen und einer vorhandenen `vacuum.*`-Entität einen verständlichen Reinigungsplan erzeugen. Der Tagesplan wird beim Start als zusammenhängender Block eingeplant. Danach können weitere spontane Aufgaben an die Queue angehängt werden.
+- Config- und sichere Verhaltens-Options-Flows ohne YAML-Konfiguration
+- Home-Assistant-Areas als öffentliche Raumidentität
+- persistente, versionierte Plan-/Queue-Daten
+- standardisierte Planner-Entities und Actions
+- One-Tap über `vacuum_planner.start_next`
+- Recovery-Zustand `uncertain` statt blindem Wiederholen
+- Diagnostics und Repairs mit redigierten Daten
+- importierbares Sections-Dashboard aus Standardkarten mit dynamischer, begrenzter Queue-Projektion unter [`dashboard/`](dashboard/README.md)
 
-Leitplanken:
+Die sichtbare Queue enthält nur geplante Räume. Erledigte Räume bleiben im Tageskontext sichtbar und können grau/dezent dargestellt werden. Unterstützte Modi sind Saugen und Saugen+Wischen – niemals ausschließlich Wischen.
 
-- Einrichtung vollständig über die Home-Assistant-Oberfläche
-- primär Standard-Entitäten und native Areas
-- Herstellerfunktionen über klar abgegrenzte Adapter
-- transparente Capability-Tiers statt falscher Universalitätsversprechen
-- universeller Entity-Vertrag für ein mitgeliefertes Dashboard
-- niemals ausschließlich wischen: Raumaufgaben sind Saugen oder Saugen+Wischen
-- One-Tap startet die aktuell fällige Aufgabe
-- in der Queue erscheinen nur geplante Räume; erledigte Einträge werden visuell zurückgenommen
+## Sicherheitsgrenze der Beta
+
+- **Dry-run ist standardmäßig aktiv.** Das Ausschalten kann reale Reinigungsbefehle auslösen.
+- Shadow-/Dry-run-Validierung ist erlaubt; **Live-Steuerung ist noch nicht freigegeben**.
+- Ein erfolgreicher Dispatch ist kein Beleg für eine abgeschlossene Reinigung.
+- Bestehende Lovelace-Dashboards und interne Lovelace-Storage-Dateien werden nicht verändert.
+- Vor Update, Downgrade oder Entfernung ist ein Home-Assistant-Backup erforderlich.
+
+Siehe [Beta-Umfang](docs/beta-scope.md), [bekannte Grenzen](docs/limitations.md) und [Rollback](docs/rollback.md).
+
+## Installation und Einrichtung
+
+1. Nach [Installationsanleitung](docs/installation.md) das private Release-ZIP authentifiziert beziehen, SHA-256 prüfen und `custom_components/vacuum_planner` kopieren.
+2. Home Assistant neu starten.
+3. **Einstellungen → Geräte & Dienste → Integration hinzufügen → Vacuum Planner** öffnen.
+4. Vorhandenen Sauger und die zu planenden Home-Assistant-Räume auswählen.
+5. Dry-run aktiviert lassen und zunächst nur Zustände, Queue und Actions prüfen.
+6. Optional die vollständige Standardkarten-Konfiguration nach der [Dashboard-Anleitung](dashboard/README.md) importieren.
+
+Es sind weder `configuration.yaml` noch Packages, Helper-YAML oder Automations-YAML erforderlich.
 
 ## Dokumentation
+
+### Betrieb und Release
+
+- [Installation](docs/installation.md)
+- [Beta-Umfang](docs/beta-scope.md)
+- [Bekannte Grenzen](docs/limitations.md)
+- [Rollback und Entfernung](docs/rollback.md)
+- [Release Notes](RELEASE_NOTES.md)
+- [Changelog](CHANGELOG.md)
+- [Lizenzstatus](LICENSE)
+- [Dashboard-Artefakt](dashboard/README.md)
+
+### Verträge und Architektur
 
 - [Produktanforderungen](docs/requirements.md)
 - [Anforderungs-Nachverfolgung](docs/requirements-traceability.md)
 - [Bekannter Ausgangszustand](docs/current-state.md)
 - [Architekturentscheidung](docs/adr/0001-solution-shape.md) *(Accepted)*
-- [Zielarchitektur](docs/architecture.md)
+- [Zielarchitektur und Implementierungsstatus](docs/architecture.md)
 - [Config Flow und Dashboard-Bereitstellung](docs/config-flow-and-dashboard.md)
 - [Queue- und Block-Semantik](docs/queue-semantics.md)
 - [Universeller Entity-Vertrag](docs/entity-contract.md)
@@ -34,14 +66,18 @@ Leitplanken:
 - [UX-Spezifikation](docs/ux-specification.md)
 - [Roadmap](docs/roadmap.md)
 
-## Entwicklungsgrundsätze
+## Entwicklung
 
-1. Keine produktiven Live-Tests in der ersten Phase.
-2. Statische Prüfungen und Unit-Tests gegen simulierte Coordinator-/Adapterobjekte sind erlaubt.
-3. Core-Funktionen dürfen nicht von einem einzelnen Hersteller abhängen.
-4. Herstelleradapter müssen degradieren können, ohne den Planner unbrauchbar zu machen.
-5. Aktuelle Home-Assistant-APIs und Integrationsrichtlinien sind maßgeblich.
+```bash
+python -m pytest -q
+ruff check .
+mypy . --strict
+bandit -q -r custom_components/vacuum_planner
+python -m compileall -q custom_components tests
+```
+
+Die dokumentierten RED-/GREEN-Läufe stehen unter [TDD evidence](docs/development/tdd-evidence.md). `v0.1.0-beta.1` bezeichnet hier nur den vorbereiteten Kandidaten; es werden kein Tag, kein GitHub-Release und kein Commit angelegt.
 
 ## Lizenz
 
-Noch nicht festgelegt. Das Repository ist privat.
+Für das Repository ist noch keine Open-Source-Lizenz festgelegt. Details und der Release-Blocker stehen in [`LICENSE`](LICENSE).

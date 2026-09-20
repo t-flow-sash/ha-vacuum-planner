@@ -3,15 +3,23 @@ import importlib
 import sys
 from enum import IntFlag
 from types import ModuleType, SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Generic, TypeVar, cast
 
 import pytest
+import voluptuous as vol
 
 from custom_components.vacuum_planner.const import (
     CONF_AREA_IDS,
+    CONF_AREA_PLANS,
+    CONF_DRY_RUN,
+    CONF_MOP_INTERVAL_DAYS,
+    CONF_PLANNING_ENABLED,
+    CONF_PRIORITY,
     CONF_VACUUM_ENTITY_ID,
+    CONF_VACUUM_INTERVAL_DAYS,
     DOMAIN,
 )
+from custom_components.vacuum_planner.domain.models import PlannerState
 
 
 class AbortFlowError(Exception):
@@ -22,8 +30,32 @@ class StubVacuumEntityFeature(IntFlag):
     CLEAN_AREA = 16384
 
 
+class StubConfigEntryDisabler:
+    INTEGRATION = "integration"
+
+
 MISSING_SUPPORTED_FEATURES = object()
 REGISTRY_OPTIONS_FROM_AREA_MAPPING = object()
+RuntimeDataT = TypeVar("RuntimeDataT")
+
+
+class StubConfigEntry(Generic[RuntimeDataT]):
+    """Minimal generic ConfigEntry surface imported by the production flow."""
+
+    def __init__(
+        self,
+        *,
+        entry_id: str = "entry-1",
+        data: dict[str, object] | None = None,
+        options: dict[str, object] | None = None,
+        unique_id: str | None = None,
+        runtime_data: RuntimeDataT | None = None,
+    ) -> None:
+        self.entry_id = entry_id
+        self.data = data or {}
+        self.options = options or {}
+        self.unique_id = unique_id
+        self.runtime_data = runtime_data
 
 
 class StubConfigFlow:
@@ -150,6 +182,8 @@ def import_config_flow() -> ModuleType:
     config_entries = ModuleType("homeassistant.config_entries")
     const = ModuleType("homeassistant.const")
     vars(vacuum)["VacuumEntityFeature"] = StubVacuumEntityFeature
+    vars(config_entries)["ConfigEntry"] = StubConfigEntry
+    vars(config_entries)["ConfigEntryDisabler"] = StubConfigEntryDisabler
     vars(config_entries)["ConfigFlow"] = StubConfigFlow
     vars(config_entries)["ConfigFlowResult"] = dict[str, object]
     vars(config_entries)["OptionsFlow"] = StubOptionsFlow
@@ -199,15 +233,35 @@ def configured_flow(
     flow = module.VacuumPlannerConfigFlow()
     state = (
         SimpleNamespace(
+            state="idle",
             attributes=(
                 {}
                 if supported_features is MISSING_SUPPORTED_FEATURES
                 else {"supported_features": supported_features}
-            )
+            ),
         )
         if entity_exists
         else None
     )
+
+    def update_entry(
+        entry: Any,
+        *,
+        data: dict[str, object],
+        unique_id: str,
+    ) -> None:
+        flow.updated_entry = entry
+        flow.updated_data = data
+        flow.updated_unique_id = unique_id
+        entry.data = data
+        entry.unique_id = unique_id
+
+    async def reload_entry(_entry_id: str) -> bool:
+        return True
+
+    async def unload_entry(_entry_id: str) -> bool:
+        return True
+
     flow.hass = SimpleNamespace(
         states=SimpleNamespace(get=lambda _entity_id: state),
         entity_registry=StubEntityRegistry(
@@ -219,8 +273,27 @@ def configured_flow(
             ),
             entity_id,
         ),
+        config_entries=SimpleNamespace(
+            async_update_entry=update_entry,
+            async_reload=reload_entry,
+            async_unload=unload_entry,
+        ),
     )
     return flow
+
+
+def finish_area_plans(flow: Any, result: dict[str, object]) -> dict[str, object]:
+    """Submit the displayed defaults until the per-area UI sequence completes."""
+    current = result
+    while current.get("type") == "form" and current.get("step_id") == "area_plan":
+        schema = cast("Any", current["data_schema"])
+        current = asyncio.run(flow.async_step_area_plan(schema({})))
+    return current
+
+
+class MemoryStore:
+    async def async_save(self, _state: PlannerState) -> None:
+        pass
 
 
 def test_user_form_selects_exactly_one_vacuum_entity() -> None:
@@ -247,9 +320,7 @@ def test_options_flow_persists_planning_enabled_preference() -> None:
     assert planning_field.schema == "planning_enabled"
     assert form["data_schema"]({}) == {"planning_enabled": True, "dry_run": True}
 
-    result = asyncio.run(
-        flow.async_step_init({"planning_enabled": False, "dry_run": True})
-    )
+    result = asyncio.run(flow.async_step_init({"planning_enabled": False, "dry_run": True}))
 
     assert result == {
         "type": "create_entry",
@@ -268,16 +339,34 @@ def test_options_flow_defaults_to_safe_dry_run() -> None:
     assert form["data_schema"]({})["dry_run"] is True
 
 
+def test_options_ui_warns_that_disabling_dry_run_enables_vacuum_commands() -> None:
+    catalog = __import__("json").loads(
+        __import__("pathlib")
+        .Path("custom_components/vacuum_planner/translations/en.json")
+        .read_text(encoding="utf-8")
+    )
+
+    description = catalog["options"]["step"]["init"]["description"].lower()
+    assert "disabling dry run" in description
+    assert "vacuum commands" in description
+
+
+def test_options_flow_allows_explicit_dry_run_disable() -> None:
+    module = import_config_flow()
+    flow = module.VacuumPlannerOptionsFlow()
+    flow.config_entry = SimpleNamespace(options={})
+
+    result = asyncio.run(flow.async_step_init({"planning_enabled": True, "dry_run": False}))
+
+    assert result["data"]["dry_run"] is False
+
+
 def test_options_flow_uses_ha_reload_contract_when_dry_run_changes() -> None:
     module = import_config_flow()
     flow = module.VacuumPlannerOptionsFlow()
-    flow.config_entry = SimpleNamespace(
-        options={"planning_enabled": True, "dry_run": False}
-    )
+    flow.config_entry = SimpleNamespace(options={"planning_enabled": True, "dry_run": False})
 
-    result = asyncio.run(
-        flow.async_step_init({"planning_enabled": True, "dry_run": True})
-    )
+    result = asyncio.run(flow.async_step_init({"planning_enabled": True, "dry_run": True}))
 
     assert isinstance(flow, StubOptionsFlowWithReload)
     assert flow.automatic_reload is True
@@ -314,8 +403,168 @@ def test_supported_vacuum_advances_to_multiple_area_selector() -> None:
     schema = result["data_schema"]
     assert len(schema.schema) == 1
     area_selector = next(iter(schema.schema.values()))
-    assert area_selector.config == {"multiple": True, "reorder": True}
+    assert area_selector.config == {"multiple": True}
     assert flow.unique_id == "vacuum-registry-entry"
+
+
+def test_area_step_collects_ui_only_plan_for_every_area(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"], "hallway": ["4"]},
+    )
+    monkeypatch.setattr(
+        sys.modules[flow.__class__.__module__],
+        "find_dreame_mova_cleaning_mode_entity",
+        lambda _hass, _registry_id: "select.downstairs_cleaning_mode",
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+
+    first = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen", "hallway"]}))
+    assert first["step_id"] == "area_plan"
+    assert set(first["data_schema"]({})) == {
+        "active",
+        "vacuum_interval_days",
+        "mop_interval_days",
+        "priority",
+        "mode",
+    }
+    second = asyncio.run(
+        flow.async_step_area_plan(
+            {
+                "active": False,
+                "vacuum_interval_days": 3,
+                "mop_interval_days": 9,
+                "priority": 4,
+                "mode": "vacuum_and_mop",
+            }
+        )
+    )
+    assert second["step_id"] == "area_plan"
+    result = asyncio.run(
+        flow.async_step_area_plan(
+            {
+                "active": True,
+                "vacuum_interval_days": 5,
+                "mop_interval_days": 11,
+                "priority": 2,
+                "mode": "vacuum_and_mop",
+            }
+        )
+    )
+
+    assert result["data"][CONF_AREA_PLANS] == {
+        "kitchen": {
+            "active": False,
+            "vacuum_interval_days": 3,
+            "mop_interval_days": 9,
+            "priority": 4,
+            "mode": "vacuum_and_mop",
+        },
+        "hallway": {
+            "active": True,
+            "vacuum_interval_days": 5,
+            "mop_interval_days": 11,
+            "priority": 2,
+            "mode": "vacuum_and_mop",
+        },
+    }
+
+
+def test_area_plans_require_one_homogeneous_native_batch_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow = configured_flow(
+        entity_exists=True,
+        area_mapping={"kitchen": ["7"], "hallway": ["4"]},
+    )
+    monkeypatch.setattr(
+        sys.modules[flow.__class__.__module__],
+        "find_dreame_mova_cleaning_mode_entity",
+        lambda _hass, _registry_id: "select.downstairs_cleaning_mode",
+    )
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen", "hallway"]}))
+    second = asyncio.run(
+        flow.async_step_area_plan(
+            {
+                "active": True,
+                "vacuum_interval_days": 7,
+                "mop_interval_days": 7,
+                "priority": 0,
+                "mode": "vacuum_and_mop",
+            }
+        )
+    )
+
+    with pytest.raises(vol.Invalid):
+        second["data_schema"](
+            {
+                "active": True,
+                "vacuum_interval_days": 7,
+                "mop_interval_days": 7,
+                "priority": 1,
+                "mode": "vacuum",
+            }
+        )
+
+
+def test_area_plan_does_not_offer_mop_without_confirmed_adapter_capability() -> None:
+    flow = configured_flow(entity_exists=True, area_mapping={"kitchen": ["7"]})
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    form = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    with pytest.raises(vol.Invalid):
+        form["data_schema"](
+            {
+                "active": True,
+                "vacuum_interval_days": 7,
+                "mop_interval_days": 7,
+                "priority": 0,
+                "mode": "vacuum_and_mop",
+            }
+        )
+
+
+def test_area_plan_rejects_automatic_mode() -> None:
+    flow = configured_flow(entity_exists=True, area_mapping={"kitchen": ["7"]})
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+
+    form = asyncio.run(flow.async_step_area_plan())
+    with pytest.raises(vol.Invalid):
+        form["data_schema"](
+            {
+                "active": True,
+                "vacuum_interval_days": 7,
+                "mop_interval_days": 7,
+                "priority": 0,
+                "mode": "automatic",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [CONF_VACUUM_INTERVAL_DAYS, CONF_MOP_INTERVAL_DAYS, CONF_PRIORITY],
+)
+def test_area_plan_rejects_bool_for_integer_fields(field: str) -> None:
+    flow = configured_flow(entity_exists=True, area_mapping={"kitchen": ["7"]})
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+    form = asyncio.run(flow.async_step_area_plan())
+    values = {
+        "active": True,
+        CONF_VACUUM_INTERVAL_DAYS: 7,
+        CONF_MOP_INTERVAL_DAYS: 7,
+        CONF_PRIORITY: 0,
+        "mode": "vacuum",
+    }
+    values[field] = True
+
+    with pytest.raises(vol.Invalid):
+        form["data_schema"](values)
 
 
 def test_area_step_creates_entry_with_ordered_mapped_ha_area_ids() -> None:
@@ -325,16 +574,17 @@ def test_area_step_creates_entry_with_ordered_mapped_ha_area_ids() -> None:
     )
     asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
 
-    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["hallway", "kitchen"]}))
+    result = finish_area_plans(
+        flow,
+        asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["hallway", "kitchen"]})),
+    )
 
-    assert result == {
-        "type": "create_entry",
-        "title": "vacuum.downstairs",
-        "data": {
-            CONF_VACUUM_ENTITY_ID: "vacuum.downstairs",
-            CONF_AREA_IDS: ["hallway", "kitchen"],
-        },
-    }
+    assert result["type"] == "create_entry"
+    assert result["title"] == "vacuum.downstairs"
+    data = cast("dict[str, Any]", result["data"])
+    assert data[CONF_VACUUM_ENTITY_ID] == "vacuum.downstairs"
+    assert data[CONF_AREA_IDS] == ["hallway", "kitchen"]
+    assert set(data[CONF_AREA_PLANS]) == {"hallway", "kitchen"}
 
 
 def test_area_step_follows_registry_identity_across_entity_rename() -> None:
@@ -345,16 +595,16 @@ def test_area_step_follows_registry_identity_across_entity_rename() -> None:
     asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
     flow.hass.entity_registry.rename("vacuum.ground_floor")
 
-    result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+    result = finish_area_plans(
+        flow,
+        asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]})),
+    )
 
-    assert result == {
-        "type": "create_entry",
-        "title": "vacuum.ground_floor",
-        "data": {
-            CONF_VACUUM_ENTITY_ID: "vacuum.ground_floor",
-            CONF_AREA_IDS: ["kitchen"],
-        },
-    }
+    assert result["type"] == "create_entry"
+    assert result["title"] == "vacuum.ground_floor"
+    data = cast("dict[str, Any]", result["data"])
+    assert data[CONF_VACUUM_ENTITY_ID] == "vacuum.ground_floor"
+    assert data[CONF_AREA_IDS] == ["kitchen"]
 
 
 def test_area_step_aborts_if_registry_identity_becomes_configured_during_flow() -> None:
@@ -367,7 +617,10 @@ def test_area_step_aborts_if_registry_identity_becomes_configured_during_flow() 
     flow.configured_unique_ids = {"vacuum-registry-entry"}
 
     with pytest.raises(AbortFlowError, match="already_configured"):
-        asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+        finish_area_plans(
+            flow,
+            asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]})),
+        )
 
     assert flow.unique_id == "vacuum-registry-entry"
     assert flow.abort_updates == {CONF_VACUUM_ENTITY_ID: "vacuum.ground_floor"}
@@ -396,7 +649,7 @@ def test_area_step_aborts_if_current_vacuum_loses_clean_area_capability(
     )
     asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
     flow.hass.states.get = lambda _entity_id: SimpleNamespace(
-        attributes={"supported_features": supported_features}
+        state="idle", attributes={"supported_features": supported_features}
     )
 
     result = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
@@ -580,3 +833,17 @@ def test_user_step_rejects_entity_without_registry_identity() -> None:
     assert result["type"] == "form"
     assert result["errors"] == {CONF_VACUUM_ENTITY_ID: "entity_not_found"}
     assert flow.unique_id is None
+
+
+def test_options_flow_contains_behavior_only() -> None:
+    module = import_config_flow()
+    flow = module.VacuumPlannerOptionsFlow()
+    flow.config_entry = SimpleNamespace(options={})
+
+    form = asyncio.run(flow.async_step_init())
+
+    assert {marker.schema for marker in form["data_schema"].schema} == {
+        CONF_PLANNING_ENABLED,
+        CONF_DRY_RUN,
+    }
+    assert form["data_schema"]({})[CONF_DRY_RUN] is True

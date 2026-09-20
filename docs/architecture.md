@@ -1,11 +1,18 @@
 # Technische Zielarchitektur
 
+> **Statusabgrenzung:** Dieses Dokument beschreibt weiterhin die Zielarchitektur. Der
+> installierbare Beta-Kandidat implementiert den generischen Integration-Shell-/Core-Pfad,
+> persistente Zustände, öffentliche Entities/Actions, Diagnostics und Repairs. Der
+> vollständige Planeditor, Mehrroboter-Lanes und Hardwarefreigaben sind noch nicht
+> enthalten. Maßgeblich für den aktuellen Lieferumfang
+> sind [Beta-Umfang](beta-scope.md) und [bekannte Grenzen](limitations.md).
+
 ## 1. Architekturziel
 
 Der HA Vacuum Planner ist ein kleiner Workflow-Orchestrator **oberhalb** vorhandener Home-Assistant-Integrationen. Er ersetzt weder Herstellerintegration noch `vacuum.*`-Entity, sondern plant raumbezogene Aufgaben, hält den fachlichen Queue-Zustand und delegiert die Ausführung über Capability-Adapter.
 
 ```text
-HA UI / Dashboard Strategy / Automationen
+HA UI / Standard-Dashboard / Automationen
                  |
       stabile Entities + Actions
                  |
@@ -35,7 +42,7 @@ HA UI / Dashboard Strategy / Automationen
 
 Home-Assistant-spezifische Schicht:
 
-- `manifest.json`, Config Flow, Reconfigure Flow und Options Flow;
+- `manifest.json`, initialer Config Flow und sicherer Options Flow;
 - Registry-Zugriff und Event-/State-Subscriptions;
 - Service-/Action-Registrierung;
 - Entities, Übersetzungen, Repairs und Diagnostics;
@@ -50,7 +57,7 @@ Reine, asynchronitätsarme Python-Logik ohne HA- oder Herstellerimporte:
 - Fälligkeitsberechnung und Priorisierung;
 - `PlanSnapshot`, `QueueBlock`, `QueueJob`;
 - Zustandsautomaten und Invarianten;
-- Append-/Dedup-/Skip-Regeln;
+- Dedup-/Skip-Regeln;
 - normalisierte Fehler und Recovery-Entscheidungen.
 
 Der Core ist deterministisch testbar: Uhr, IDs und Adapterresultate werden injiziert.
@@ -78,7 +85,7 @@ class VacuumAdapter(Protocol):
     async def async_probe(self) -> CapabilityProfile: ...
     async def async_validate(self, jobs: tuple[ResolvedJob, ...]) -> ValidationResult: ...
     async def async_commit_block(self, block: ResolvedBlock) -> CommitResult: ...
-    async def async_append(self, jobs: tuple[ResolvedJob, ...]) -> AppendResult: ...
+
     async def async_observe(self, run: ActiveRun) -> ExecutionObservation: ...
     async def async_cancel(self, run: ActiveRun) -> CancelResult: ...
 ```
@@ -118,13 +125,13 @@ PlannerInstance
 - `enabled`
 - `vacuum_interval_days`
 - `vacuum_and_mop_interval_days` (nur bei Capability)
-- `preferred_mode`: `automatic | vacuum | vacuum_and_mop`
+- `preferred_mode`: `vacuum | vacuum_and_mop`
 - `priority`
 - `skip_until`
 - `last_completed_vacuum_at`
 - `last_completed_vacuum_and_mop_at`
 
-Bei `automatic` gilt: Ist Wischen fällig, entsteht `vacuum_and_mop`; sonst `vacuum`. Ein `vacuum_and_mop`-Abschluss erfüllt zugleich die Saugfälligkeit.
+Ein `vacuum_and_mop`-Abschluss erfüllt zugleich die Saugfälligkeit.
 
 ### `CapabilityProfile`
 
@@ -135,7 +142,7 @@ Keine einzelne Tierzahl ersetzt die Feature-Matrix. Die Matrix ist autoritativ; 
 - `mode_vacuum`
 - `mode_vacuum_and_mop`
 - `atomic_device_commit`
-- `append_device_queue`
+
 - `queue_introspection`
 - `per_area_progress`
 - `run_correlation`
@@ -150,7 +157,7 @@ Das vollständige Schema und die Zustandsübergänge stehen in [Queue- und Block
 
 ### Native Basis
 
-Wenn die gewählte Vacuum-Integration `CLEAN_AREA` plus natives Area-Mapping anbietet, verwendet der generische Adapter `vacuum.clean_area` mit einer geordneten Area-Liste. Der Planner führt kein zweites benutzerseitiges Segmentregister.
+Wenn die gewählte Vacuum-Integration `CLEAN_AREA` plus natives Area-Mapping anbietet, verwendet der generische Adapter `vacuum.clean_area` für die vom einzelnen Job adressierte HA-Area. Der Planner führt kein zweites benutzerseitiges Segmentregister.
 
 ### Onboarding-Gate
 
@@ -166,7 +173,7 @@ Fehlerbeispiel:
 
 > „Küche ist diesem Roboter noch keinem Kartensegment zugeordnet. Öffne die Einstellungen der Sauger-Entität, wähle ‚Map vacuum segments to areas‘ und ordne Küche zu. Kehre danach hierher zurück und drücke ‚Erneut prüfen‘.“
 
-Ein Tagesblock wird **nicht teilweise** versiegelt. Entfernte Areas, verlorene Entities oder veraltete Bindings erzeugen deduplizierte Repairs und blockieren nur die betroffene Lane.
+Ein von `start_next` erzeugter Ein-Job-Block wird **nicht teilweise** versiegelt. Entfernte Areas, verlorene Entities oder veraltete Bindings erzeugen deduplizierte Repairs und blockieren nur die betroffene Lane.
 
 ### Herstelleradapter
 
@@ -177,8 +184,6 @@ Ein Herstelleradapter darf Segment-IDs oder vendor-spezifische Services nutzen, 
 ### Actions
 
 - `vacuum_planner.start_next` (kanonische öffentliche One-Tap-Action)
-- `vacuum_planner.start_due_block` (technische Block-Action)
-- `vacuum_planner.enqueue_area`
 - `vacuum_planner.skip_area_today`
 - `vacuum_planner.postpone_area`
 - `vacuum_planner.cancel_block`
@@ -187,9 +192,9 @@ Ein Herstelleradapter darf Segment-IDs oder vendor-spezifische Services nutzen, 
 
 Mutierende Actions adressieren explizit eine Planner-Instanz und laufen über denselben Coordinator/Lock. Die Action-Schemas werden auch ohne geladenen Config Entry registriert, damit Automationen editierbar bleiben.
 
-### Events
+### Statusquelle
 
-Normalisierte Events wie `block_committed`, `job_started`, `job_completed`, `job_failed` dienen Automationen. Sie sind nicht autoritativ und enthalten keine rohen Herstellerdaten.
+Entities und persistenter Store sind die Statusquelle der Beta.
 
 ### Entities
 
@@ -198,9 +203,8 @@ Der detaillierte Vertrag steht in [Universeller Entity-Vertrag](entity-contract.
 ## 6. Nebenläufigkeit und Recovery
 
 - ein Lock pro Robot Lane; optional zusätzlicher kurzer Ledger-Lock über lane-übergreifende Mutationen;
-- wiederholtes One-Tap liefert denselben offenen Tagesblock zurück, statt einen zweiten zu erzeugen;
-- Append ist während `validating`, `sealing` und `committing` gesperrt;
-- Append öffnet erst nach erfolgreichem Planner-Commit;
+- wiederholtes One-Tap liefert denselben offenen Ein-Job-Block zurück, statt einen zweiten zu erzeugen;
+
 - direkte externe Roboterbedienung wird, soweit beobachtbar, als Interferenz ausgewiesen;
 - nach Neustart wird nie blind erneut gesendet;
 - ohne sichere Korrelation geht ein Commit in `uncertain`, mit Benutzerentscheidung statt vermutetem Erfolg;
@@ -208,11 +212,11 @@ Der detaillierte Vertrag steht in [Universeller Entity-Vertrag](entity-contract.
 
 ## 7. Dashboard-Architektur
 
-Die Backend-Integration liefert immer einen vollständigen Satz universeller Entities und Actions. Drei Stufen:
-
-1. **Baseline:** Standard-Entities funktionieren in HA-Automationen, Geräteansicht und manuellen Standard-Cards.
-2. **Empfohlen:** gebündelte Custom Dashboard Strategy erzeugt dynamisch ein eigenes „Saugplanung“-Dashboard aus Registry/Entities. Der Benutzer legt es einmal über „Dashboard hinzufügen“ an; danach aktualisiert es sich automatisch.
-3. **Optional später:** eigenes Custom Panel nur für Queue-Editor/Drag-and-drop, falls Standard-Cards/Strategy nicht ausreichen.
+Die Backend-Integration liefert Planner-Entities und Actions für HA-Automationen,
+Geräteansicht und manuelle Standardkarten. Zusätzlich enthält der Beta-Kandidat das
+herstellerneutrale [Standardkarten-Dashboard](../dashboard/README.md). Weil Standardkarten
+die von HA vergebenen Entity-IDs nicht dynamisch auflösen, werden die dokumentierten
+stabilen Entity-IDs einmalig gesetzt und die Raw-Konfiguration bewusst importiert.
 
 Nicht zulässig sind ungefragte Änderungen an bestehenden Dashboards, direkte Manipulation interner Lovelace-Storage-Dateien oder private APIs. Daher bedeutet „möglichst automatisch“: **ein bestätigter Anlegeschritt, anschließend dynamisch**, nicht heimliche Installation als Hauptdashboard.
 
@@ -220,12 +224,13 @@ UX-Hierarchie:
 
 1. Hero „Nächste Reinigung“ + Robot/Planner-Status;
 2. One-Tap „Fällige Aufgabe starten“;
-3. heutiger versiegelter Block, danach klar getrennte Ad-hoc-Jobs;
+3. tatsächlich materialisierte Queue-Jobs aus fälligen Planaufgaben;
 4. erledigte Räume grau, laufender Raum betont, keine ungeplanten Räume;
 5. Raumpläne und Intervalle unterhalb der Primäraktionen;
 6. Capability-Payoff in verständlicher Sprache, nicht als technische Featureliste.
 
-Große/volatile Queue-Daten werden über eine validierte WebSocket-Schnittstelle oder Action-Response an die Strategy geliefert, nicht dauerhaft in Entity-Attributen aufgebläht.
+Die öffentliche Queue bleibt eine begrenzte, recorderfreundliche Sensorprojektion; die
+vollständige read-only Abfrage erfolgt ausschließlich über `vacuum_planner.get_queue`.
 
 ## 8. Nichtfunktionale Anforderungen
 

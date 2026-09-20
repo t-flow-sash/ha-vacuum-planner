@@ -50,18 +50,18 @@ Beide aktuell erkannten Sauger melden das Home-Assistant-Feature `CLEAN_AREA`. B
 
 - Aufgaben sind Saugen oder Saugen+Wischen; kein reines Wischen.
 - One-Tap startet die aktuell fällige Aufgabe.
-- Tagesqueue enthält nur eingeplante Räume.
+- Die sichtbare Queue enthält nur eingeplante Räume.
 - Erledigte Räume werden grau bzw. visuell zurückgenommen.
-- Ein gestarteter Tagesplan ist ein zusammenhängender Queue-Block; spätere Ad-hoc-Aufgaben werden dahinter angefügt.
+- `start_next` materialisiert genau die nächste fällige Planaufgabe als Ein-Job-Block.
 
 ## Technische Schulden, die das neue Design beseitigen muss
 
 - Zeitstempel dürfen nicht schon beim Senden eines Reinigungsbefehls als erfolgreich abgeschlossen gelten; Abschluss und Fehler müssen getrennte Zustandsübergänge sein.
 - Kommaseparierte Queue-Strings sind nicht transaktional, nur begrenzt skalierbar und bei Neustarts/Parallelzugriffen fehleranfällig.
-- Ein Tagesblock braucht eine stabile `block_id`, unveränderliche Reihenfolge und getrennte Laufzeitstände pro Job.
+- Jeder materialisierte Block braucht eine stabile `block_id` und getrennte Laufzeitstände pro Job.
 - Direkte Segment- und Hersteller-Service-IDs dürfen nicht im Planner-Core oder Dashboard stecken.
 - Die Logik muss nach Home-Assistant-Neustart erkennen, ob ein Job geplant, gesendet, aktiv, abgeschlossen, abgebrochen oder unklar ist.
-- Ad-hoc-Aufgaben dürfen einen bereits gestarteten Tagesblock nicht neu sortieren oder überschreiben.
+- Ungeplante Aufgaben gehören nicht zum öffentlichen Beta-Vertrag.
 
 ## Migrationsprinzip
 

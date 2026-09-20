@@ -18,9 +18,8 @@ Die bestehende Saugerplanung funktioniert, ist aber installationsspezifisch. Sie
 
 - Räume können eigene Intervalle, Prioritäten und Aktivzustände erhalten.
 - Unterstützte Aufgabentypen sind **Saugen** und **Saugen+Wischen**; ausschließliches Wischen ist ausgeschlossen.
-- One-Tap startet die aktuell fällige Aufgabe.
-- Der Tagesplan wird beim Start logisch als geschlossener Block in die Ausführungsqueue übernommen.
-- Danach dürfen zusätzliche spontane Aufgaben hinter diesem Block angehängt werden.
+- One-Tap materialisiert und startet genau die aktuell nächste fällige Aufgabe.
+- Jeder Aufruf erzeugt höchstens einen versiegelten Ein-Job-Block; weitere fällige Aufgaben benötigen einen späteren sicheren Aufruf.
 - Die sichtbare Queue enthält nur tatsächlich geplante Räume.
 - Erledigte Räume bleiben für den Tageskontext sichtbar, werden aber grau/dezent dargestellt.
 

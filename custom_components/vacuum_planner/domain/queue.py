@@ -1,4 +1,4 @@
-"""Pure queue commands for atomic sealing, idempotent start, and append-only ad-hoc work."""
+"""Pure queue commands for atomic sealing, idempotent start, and recovery."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from .models import (
     QueueJob,
     QueueLedger,
 )
-from .planning import AreaBinding  # noqa: TC001 - public command API exposes this domain type
 
 IdFactory = Callable[[], str]
 
@@ -36,9 +35,7 @@ _TERMINAL_BLOCK_STATES = frozenset(
 _TERMINAL_JOB_STATES = frozenset(
     {JobState.COMPLETED, JobState.FAILED, JobState.SKIPPED, JobState.CANCELLED}
 )
-_ACTIVE_JOB_STATES = frozenset(
-    {JobState.DISPATCHING, JobState.ACCEPTED, JobState.RUNNING}
-)
+_ACTIVE_JOB_STATES = frozenset({JobState.DISPATCHING, JobState.ACCEPTED, JobState.RUNNING})
 
 
 def _has_external_correlation(value: str | None) -> bool:
@@ -48,9 +45,7 @@ def _has_external_correlation(value: str | None) -> bool:
 
 def _is_uncorrelated_active(job: QueueJob) -> bool:
     """Return whether a job may have an untracked external side effect."""
-    return job.state in _ACTIVE_JOB_STATES and not _has_external_correlation(
-        job.adapter_token
-    )
+    return job.state in _ACTIVE_JOB_STATES and not _has_external_correlation(job.adapter_token)
 
 
 class StartStatus(StrEnum):
@@ -61,13 +56,6 @@ class StartStatus(StrEnum):
     NO_WORK = "no_work"
 
 
-class EnqueueStatus(StrEnum):
-    """Outcome of an ad-hoc enqueue command."""
-
-    CREATED = "created"
-    DUPLICATE = "duplicate"
-
-
 class UncertainResolution(StrEnum):
     """Explicit, operator-confirmed safe outcomes for an uncertain dispatch."""
 
@@ -76,10 +64,6 @@ class UncertainResolution(StrEnum):
 
 class DuplicateIdentityError(ValueError):
     """Generated block/job identities are not globally unique."""
-
-
-class QueueBusyError(ValueError):
-    """The lane append gate is closed during a critical block phase."""
 
 
 class LaneAlreadyOpenError(ValueError):
@@ -98,16 +82,6 @@ class StartResult:
     ledger: QueueLedger
     block: QueueBlock | None
     jobs: tuple[QueueJob, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class EnqueueResult:
-    """Immutable result of ``enqueue_area``."""
-
-    status: EnqueueStatus
-    ledger: QueueLedger
-    block: QueueBlock
-    job: QueueJob
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,9 +116,7 @@ def complete_job_and_advance_plan(
     if current_plan.room_plans and current_plan.room_plans[0].lane_id != parent.lane_id:
         raise ValueError("plan lane does not match job lane")
     completed_ledger = ledger.replace_job_state(job_id, JobState.COMPLETED, completed_at)
-    block_jobs = tuple(
-        item for item in completed_ledger.jobs if item.block_id == parent.block_id
-    )
+    block_jobs = tuple(item for item in completed_ledger.jobs if item.block_id == parent.block_id)
     if all(item.state in _TERMINAL_JOB_STATES for item in block_jobs):
         block_completed_at = max(
             item.finished_at for item in block_jobs if item.finished_at is not None
@@ -207,9 +179,7 @@ def start_due_block(
             and block.idempotency_key == idempotency_key
             and block.state not in _TERMINAL_BLOCK_STATES
         ):
-            return StartResult(
-                StartStatus.EXISTING, ledger, block, _jobs_for_block(ledger, block)
-            )
+            return StartResult(StartStatus.EXISTING, ledger, block, _jobs_for_block(ledger, block))
     if snapshot.lane_id != lane_id:
         raise ValueError("snapshot lane does not match requested lane")
     if (
@@ -234,9 +204,7 @@ def start_due_block(
     block_id = id_factory()
     job_ids = tuple(id_factory() for _ in snapshot.jobs)
     allocated = (block_id, *job_ids)
-    existing_ids = {block.block_id for block in ledger.blocks} | {
-        job.job_id for job in ledger.jobs
-    }
+    existing_ids = {block.block_id for block in ledger.blocks} | {job.job_id for job in ledger.jobs}
     if len(allocated) != len(set(allocated)) or existing_ids.intersection(allocated):
         raise DuplicateIdentityError("generated queue identities must be globally unique")
 
@@ -352,9 +320,7 @@ def begin_native_batch_commit(
     return replace(
         ledger,
         revision=ledger.revision + 1,
-        blocks=tuple(
-            committing if item.block_id == block_id else item for item in ledger.blocks
-        ),
+        blocks=tuple(committing if item.block_id == block_id else item for item in ledger.blocks),
         jobs=tuple(dispatching.get(job.job_id, job) for job in ledger.jobs),
     )
 
@@ -379,101 +345,15 @@ def quarantine_block_dispatch(
         ledger,
         revision=ledger.revision + 1,
         blocks=tuple(
-            replace(item, state=BlockState.UNCERTAIN)
-            if item.block_id == block_id
-            else item
+            replace(item, state=BlockState.UNCERTAIN) if item.block_id == block_id else item
             for item in ledger.blocks
         ),
         jobs=tuple(
-            replace(job, state=JobState.UNCERTAIN)
-            if job.block_id == block_id
-            else job
+            replace(job, state=JobState.UNCERTAIN) if job.block_id == block_id else job
             for job in ledger.jobs
         ),
         last_reconciled_at=reconciled_at,
     )
-
-
-def enqueue_area(
-    ledger: QueueLedger,
-    lane_id: str,
-    binding: AreaBinding,
-    mode: Mode,
-    now: datetime,
-    id_factory: IdFactory,
-    *,
-    confirmed_repeat: bool = False,
-) -> EnqueueResult:
-    """Append one validated ad-hoc block to a lane without mutating sealed blocks."""
-    lane_blocks = [block for block in ledger.blocks if block.lane_id == lane_id]
-    if any(
-        block.state in {BlockState.VALIDATING, BlockState.SEALED, BlockState.COMMITTING}
-        for block in lane_blocks
-    ):
-        raise QueueBusyError("busy_committing")
-    anchor = next(
-        (
-            block
-            for block in reversed(lane_blocks)
-            if block.kind is BlockKind.SCHEDULED
-            and block.state in {BlockState.COMMITTED, BlockState.RUNNING}
-        ),
-        None,
-    )
-    if anchor is None:
-        raise QueueBusyError("no committed scheduled block")
-    if mode is Mode.VACUUM_AND_MOP and not binding.supports_vacuum_and_mop:
-        raise ValueError("vacuum_and_mop is not supported")
-
-    blocks_by_id = {block.block_id: block for block in ledger.blocks}
-    if not confirmed_repeat:
-        for job in ledger.jobs:
-            parent = blocks_by_id[job.block_id]
-            if (
-                parent.lane_id == lane_id
-                and job.area_id == binding.area_id
-                and job.mode is mode
-                and job.state not in _TERMINAL_JOB_STATES
-            ):
-                return EnqueueResult(EnqueueStatus.DUPLICATE, ledger, parent, job)
-
-    block_id = id_factory()
-    job_id = id_factory()
-    existing_ids = set(blocks_by_id) | {job.job_id for job in ledger.jobs}
-    if block_id == job_id or block_id in existing_ids or job_id in existing_ids:
-        raise DuplicateIdentityError("generated queue identities must be globally unique")
-    job = QueueJob(
-        job_id=job_id,
-        block_id=block_id,
-        area_id=binding.area_id,
-        area_name_snapshot=binding.area_name,
-        adapter_target_snapshot=binding.adapter_target,
-        mode=mode,
-        position=0,
-        state=JobState.PENDING,
-        attempt=0,
-        planned_at=now,
-    )
-    block = QueueBlock(
-        block_id=block_id,
-        kind=BlockKind.ADHOC,
-        lane_id=lane_id,
-        plan_revision=anchor.plan_revision,
-        idempotency_key=f"adhoc:{job_id}",
-        created_at=now,
-        sealed_at=now,
-        state=BlockState.SEALED,
-        job_ids=(job_id,),
-        dispatch_strategy=DispatchStrategy.PLANNER_SEQUENTIAL,
-        guarantee=BlockGuarantee.PLANNER_ATOMIC,
-    )
-    updated = replace(
-        ledger,
-        revision=ledger.revision + 1,
-        blocks=(*ledger.blocks, block),
-        jobs=(*ledger.jobs, job),
-    )
-    return EnqueueResult(EnqueueStatus.CREATED, updated, block, job)
 
 
 def resolve_uncertain_job(
@@ -509,10 +389,7 @@ def resolve_uncertain_job(
     )
     if has_remaining_uncertainty:
         resumed_block = replace(block, state=BlockState.UNCERTAIN)
-    elif (
-        block.dispatch_strategy is DispatchStrategy.NATIVE_BATCH
-        and block.committed_at is None
-    ):
+    elif block.dispatch_strategy is DispatchStrategy.NATIVE_BATCH and block.committed_at is None:
         resumed_block = replace(
             block,
             state=BlockState.FAILED,
@@ -521,18 +398,13 @@ def resolve_uncertain_job(
     else:
         resumed_block = replace(
             block,
-            state=(
-                BlockState.RUNNING
-                if block.committed_at is not None
-                else BlockState.COMMITTING
-            ),
+            state=(BlockState.RUNNING if block.committed_at is not None else BlockState.COMMITTING),
         )
     return replace(
         ledger,
         revision=ledger.revision + 1,
         blocks=tuple(
-            resumed_block if item.block_id == block.block_id else item
-            for item in ledger.blocks
+            resumed_block if item.block_id == block.block_id else item for item in ledger.blocks
         ),
         jobs=jobs,
     )
@@ -551,34 +423,22 @@ def resolve_uncertain_block(
         raise KeyError(block_id)
     if block.state is not BlockState.UNCERTAIN:
         raise ValueError("block is not uncertain")
-    if any(
-        job.block_id == block_id and job.state is JobState.UNCERTAIN
-        for job in ledger.jobs
-    ):
+    if any(job.block_id == block_id and job.state is JobState.UNCERTAIN for job in ledger.jobs):
         raise ValueError("uncertain child jobs must be resolved first")
-    if any(
-        job.block_id == block_id
-        and _is_uncorrelated_active(job)
-        for job in ledger.jobs
-    ):
+    if any(job.block_id == block_id and _is_uncorrelated_active(job) for job in ledger.jobs):
         raise ValueError("uncorrelated active child prevents block release")
-    resumed_state = (
-        BlockState.RUNNING if block.committed_at is not None else BlockState.COMMITTING
-    )
+    resumed_state = BlockState.RUNNING if block.committed_at is not None else BlockState.COMMITTING
     resumed_block = replace(block, state=resumed_state)
     return replace(
         ledger,
         revision=ledger.revision + 1,
         blocks=tuple(
-            resumed_block if item.block_id == block_id else item
-            for item in ledger.blocks
+            resumed_block if item.block_id == block_id else item for item in ledger.blocks
         ),
     )
 
 
-def quarantine_ambiguous_dispatches(
-    ledger: QueueLedger, reconciled_at: datetime
-) -> QueueLedger:
+def quarantine_ambiguous_dispatches(ledger: QueueLedger, reconciled_at: datetime) -> QueueLedger:
     """Quarantine every active external state that lacks restart correlation."""
     active_block_states = {
         BlockState.COMMITTING,
@@ -591,11 +451,7 @@ def quarantine_ambiguous_dispatches(
         if block.state in active_block_states
         and not _has_external_correlation(block.adapter_run_id)
     }
-    ambiguous_block_ids.update(
-        job.block_id
-        for job in ledger.jobs
-        if _is_uncorrelated_active(job)
-    )
+    ambiguous_block_ids.update(job.block_id for job in ledger.jobs if _is_uncorrelated_active(job))
     blocks = tuple(
         replace(block, state=BlockState.UNCERTAIN)
         if block.block_id in ambiguous_block_ids and block.state in active_block_states
@@ -603,9 +459,7 @@ def quarantine_ambiguous_dispatches(
         for block in ledger.blocks
     )
     jobs = tuple(
-        replace(job, state=JobState.UNCERTAIN)
-        if _is_uncorrelated_active(job)
-        else job
+        replace(job, state=JobState.UNCERTAIN) if _is_uncorrelated_active(job) else job
         for job in ledger.jobs
     )
     return replace(

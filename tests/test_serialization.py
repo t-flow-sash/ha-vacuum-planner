@@ -8,6 +8,7 @@ import pytest
 
 from custom_components.vacuum_planner.domain.models import (
     BlockGuarantee,
+    BlockKind,
     BlockState,
     DispatchStrategy,
     JobState,
@@ -49,10 +50,17 @@ class IDs:
 
 def revision() -> PlanRevision:
     return PlanRevision(
-        "rev-1", NOW,
+        "rev-1",
+        NOW,
         (
             RoomPlan(
-                "kitchen", "lane", True, 2, 7, PreferredMode.AUTOMATIC, 10,
+                "kitchen",
+                "lane",
+                True,
+                2,
+                7,
+                PreferredMode.VACUUM,
+                10,
                 last_completed_vacuum_at=NOW,
             ),
         ),
@@ -61,7 +69,9 @@ def revision() -> PlanRevision:
 
 def snapshot() -> PlanSnapshot:
     return PlanSnapshot(
-        "rev-1", "lane", NOW,
+        "rev-1",
+        "lane",
+        NOW,
         (
             SnapshotJob(
                 "kitchen",
@@ -77,8 +87,14 @@ def snapshot() -> PlanSnapshot:
 
 def ledger() -> QueueLedger:
     started = start_due_block(
-        QueueLedger.empty(), snapshot(), "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot(),
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     committing = started.replace_block_state("id-1", BlockState.COMMITTING, NOW)
     return committing.replace_block_state("id-1", BlockState.UNCERTAIN, NOW)
@@ -122,6 +138,26 @@ def test_versioned_models_survive_json_restart_roundtrip(
 
     assert encoded["schema_version"] == 1
     assert deserialize(restarted) == value
+
+
+def test_legacy_automatic_preferred_mode_is_canonicalized_for_restart_compatibility() -> None:
+    payload = serialize_plan_revision(revision())
+    payload["data"]["room_plans"][0]["preferred_mode"] = "automatic"
+
+    restarted = deserialize_plan_revision(payload)
+
+    assert restarted.room_plans[0].preferred_mode is PreferredMode.VACUUM
+    assert serialize_plan_revision(restarted)["data"]["room_plans"][0]["preferred_mode"] == "vacuum"
+
+
+def test_legacy_ad_hoc_block_kind_is_canonicalized_for_restart_compatibility() -> None:
+    payload = serialize_ledger(ledger())
+    payload["data"]["blocks"][0]["kind"] = "adhoc"
+
+    restarted = deserialize_ledger(payload)
+
+    assert restarted.blocks[0].kind is BlockKind.SCHEDULED
+    assert serialize_ledger(restarted)["data"]["blocks"][0]["kind"] == "scheduled"
 
 
 def test_restart_preserves_order_identity_uncertain_state_and_adapter_target() -> None:
@@ -190,8 +226,14 @@ def test_corrupt_enum_and_references_are_rejected() -> None:
 
 def test_deserialization_rejects_completed_job_without_completion_timestamp() -> None:
     current = start_due_block(
-        QueueLedger.empty(), snapshot(), "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot(),
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     for block_state in (BlockState.COMMITTING, BlockState.COMMITTED, BlockState.RUNNING):
         current = current.replace_block_state("id-1", block_state, NOW)

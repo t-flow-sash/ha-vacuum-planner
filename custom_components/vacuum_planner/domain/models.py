@@ -27,9 +27,7 @@ def freeze_json(value: object) -> JsonValue:
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
             raise ValueError("JSON object keys must be strings")
-        return MappingProxyType(
-            {key: freeze_json(value[key]) for key in sorted(value)}
-        )
+        return MappingProxyType({key: freeze_json(value[key]) for key in sorted(value)})
     raise ValueError("adapter target must be JSON-compatible")
 
 
@@ -52,7 +50,6 @@ class Mode(StrEnum):
 class PreferredMode(StrEnum):
     """Room-plan mode selection policy."""
 
-    AUTOMATIC = "automatic"
     VACUUM = "vacuum"
     VACUUM_AND_MOP = "vacuum_and_mop"
 
@@ -61,7 +58,6 @@ class BlockKind(StrEnum):
     """Queue block origin."""
 
     SCHEDULED = "scheduled"
-    ADHOC = "adhoc"
 
 
 class DispatchStrategy(StrEnum):
@@ -153,16 +149,11 @@ class RoomPlan:
         _require_enum(self.preferred_mode, PreferredMode)
         if self.vacuum_interval_days <= 0:
             raise ValueError("vacuum_interval_days must be positive")
-        if (
-            self.vacuum_and_mop_interval_days is not None
-            and self.vacuum_and_mop_interval_days <= 0
-        ):
+        if self.vacuum_and_mop_interval_days is not None and self.vacuum_and_mop_interval_days <= 0:
             raise ValueError("vacuum_and_mop_interval_days must be positive")
         _require_aware("skip_until", self.skip_until)
         _require_aware("last_completed_vacuum_at", self.last_completed_vacuum_at)
-        _require_aware(
-            "last_completed_vacuum_and_mop_at", self.last_completed_vacuum_and_mop_at
-        )
+        _require_aware("last_completed_vacuum_and_mop_at", self.last_completed_vacuum_and_mop_at)
         if (
             self.preferred_mode is PreferredMode.VACUUM_AND_MOP
             and self.vacuum_and_mop_interval_days is None
@@ -389,13 +380,9 @@ _BLOCK_TRANSITIONS: dict[BlockState, frozenset[BlockState]] = {
 
 
 _JOB_TRANSITIONS: dict[JobState, frozenset[JobState]] = {
-    JobState.PENDING: frozenset(
-        {JobState.DISPATCHING, JobState.SKIPPED, JobState.CANCELLED}
-    ),
+    JobState.PENDING: frozenset({JobState.DISPATCHING, JobState.SKIPPED, JobState.CANCELLED}),
     JobState.DISPATCHING: frozenset({JobState.ACCEPTED, JobState.FAILED}),
-    JobState.ACCEPTED: frozenset(
-        {JobState.RUNNING, JobState.UNCERTAIN, JobState.CANCELLED}
-    ),
+    JobState.ACCEPTED: frozenset({JobState.RUNNING, JobState.UNCERTAIN, JobState.CANCELLED}),
     JobState.RUNNING: frozenset(
         {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED, JobState.UNCERTAIN}
     ),
@@ -446,9 +433,7 @@ def _validate_job_dispatch(
         raise ValueError("later sequential job has already advanced")
 
 
-def _validate_terminal_block_result(
-    block_state: BlockState, block_jobs: list[QueueJob]
-) -> None:
+def _validate_terminal_block_result(block_state: BlockState, block_jobs: list[QueueJob]) -> None:
     """Require a terminal block outcome to agree with all child outcomes."""
     states = {job.state for job in block_jobs}
     if block_state is BlockState.COMPLETED and states != {JobState.COMPLETED}:
@@ -508,9 +493,7 @@ def _validate_block_job_compatibility(
         raise ValueError("job state is incompatible with parent block")
 
 
-def _validate_ledger_references(
-    blocks: tuple[QueueBlock, ...], jobs: tuple[QueueJob, ...]
-) -> None:
+def _validate_ledger_references(blocks: tuple[QueueBlock, ...], jobs: tuple[QueueJob, ...]) -> None:
     """Validate the complete block/job ownership graph."""
     known_block_ids, jobs_by_id = _validate_unique_queue_ids(blocks, jobs)
     if any(job.block_id not in known_block_ids for job in jobs):

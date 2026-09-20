@@ -9,7 +9,7 @@
 - [x] Queue-/Block-Invarianten dokumentieren
 - [x] ersten universellen Entity-Vertrag definieren
 - [x] Kompatibilitätsmatrix und Capability-Tiers reviewen
-- [x] UX-Flow und Dashboard-Strategie freigeben
+- [x] UX-Flow und Standardkarten-Dashboard freigeben
 - [x] ADR 0001 auf `Accepted` setzen
 
 **Gate:** Architektur-, UX- und Integrationsreview widersprechen sich nicht; offene Annahmen sind markiert.
@@ -21,10 +21,14 @@
 - Plan-, Block- und Jobmodelle
 - Fälligkeitsberechnung für Saugen und Saugen+Wischen
 - Priorisierung und unveränderliche Snapshot-Blöcke
-- Append-/Dedup-Regeln für Ad-hoc-Jobs
+- ausschließlich fällige Jobs aus konfigurierten Area-Plänen
 - Zustandsautomat einschließlich Fehler/`uncertain`
 - versioniertes Persistenzschema und Migrationen
 - Unit- und Property-Tests
+
+**Stand Beta-Kandidat:** Domainmodell, Planung, Queue, Zustandsautomat, Serialisierung,
+Recovery und Unit-Tests sind implementiert. Das Gate bleibt für eine spätere formale
+Release-Freigabe anhand der vollständigen Abdeckung zu bestätigen.
 
 **Gate:** vollständige Testabdeckung der Invarianten; kein Hersteller- oder HA-Import im Core.
 
@@ -42,6 +46,10 @@
 - Versand über `vacuum.clean_area` mit geordneter Area-Liste
 - Repairs und Diagnostics
 
+**Stand Beta-Kandidat:** installierbare Shell, UI-Flows, nativer Area-Pfad, Coordinator,
+Store, öffentliche Plattformen, Repairs und Diagnostics sind vorhanden und mit simulierten
+HA-Schnittstellen getestet. Der vollständige Zielumfang einzelner Planparameter bleibt offen.
+
 **Gate:** Integrationstests mit simulierten HA-Entities; noch keine reale Robotersteuerung.
 
 ## Phase 3 — UX und Dashboard
@@ -54,6 +62,10 @@
 - responsive Tablet-/Desktop-/Mobile-Layouts
 - Accessibility, Fokusführung, Touch-Ziele und Fehlerzustände
 - kein direktes Referenzieren von Herstellerentitäten
+
+**Stand Beta-Kandidat:** Standardkarten-Template, einmaliger visueller UI-Schritt und
+Mock-States sind unter [`dashboard/`](../dashboard/README.md) vorhanden. Dynamische Strategy,
+vollständiger Planeditor sowie Screenshot-/DOM-Abnahme bleiben offen.
 
 **Gate:** statischer UX-Review und Screenshot-/DOM-Tests gegen Mockdaten; keine Live-Instanz.
 
@@ -101,6 +113,9 @@ Erst nach ausdrücklicher Freigabe:
 - danach Adapterfunktionen einzeln aktivieren
 - Fehler-, Neustart- und Interferenzfälle testen
 - Altlogik erst nach stabiler Pilotphase entfernen
+
+**Aktueller Status:** nicht freigegeben. Dry-run/Shadow Mode bleibt Standard; siehe
+[Beta-Umfang](beta-scope.md) und [bekannte Grenzen](limitations.md).
 
 ## Release-Kriterien für v1.0
 

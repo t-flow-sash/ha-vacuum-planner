@@ -24,7 +24,7 @@ def plan(area_id: str, **overrides: object) -> RoomPlan:
         "enabled": True,
         "vacuum_interval_days": 2,
         "vacuum_and_mop_interval_days": 7,
-        "preferred_mode": PreferredMode.AUTOMATIC,
+        "preferred_mode": PreferredMode.VACUUM,
         "priority": 0,
         "last_completed_vacuum_at": NOW - timedelta(days=1),
         "last_completed_vacuum_and_mop_at": NOW - timedelta(days=1),
@@ -40,10 +40,17 @@ def bindings(*areas: str, mop: bool = True) -> dict[str, AreaBinding]:
     }
 
 
-def test_automatic_selects_mop_when_mop_is_due() -> None:
+def test_explicit_vacuum_and_mop_mode_selects_mop_when_due() -> None:
     revision = PlanRevision(
-        "rev", NOW,
-        (plan("kitchen", last_completed_vacuum_and_mop_at=NOW - timedelta(days=7)),),
+        "rev",
+        NOW,
+        (
+            plan(
+                "kitchen",
+                preferred_mode=PreferredMode.VACUUM_AND_MOP,
+                last_completed_vacuum_and_mop_at=NOW - timedelta(days=7),
+            ),
+        ),
     )
 
     snapshot = build_due_snapshot(revision, bindings("kitchen"), NOW)
@@ -55,7 +62,8 @@ def test_automatic_selects_mop_when_mop_is_due() -> None:
 
 def test_successful_mop_timestamp_also_satisfies_vacuum_due_date() -> None:
     revision = PlanRevision(
-        "rev", NOW,
+        "rev",
+        NOW,
         (
             plan(
                 "kitchen",
@@ -74,7 +82,8 @@ def test_successful_mop_timestamp_also_satisfies_vacuum_due_date() -> None:
 
 def test_missing_completion_is_immediately_due_at_evaluation_time() -> None:
     revision = PlanRevision(
-        "rev", NOW,
+        "rev",
+        NOW,
         (
             plan(
                 "new-room",
@@ -93,7 +102,8 @@ def test_missing_completion_is_immediately_due_at_evaluation_time() -> None:
 
 def test_disabled_and_currently_skipped_rooms_are_excluded() -> None:
     revision = PlanRevision(
-        "rev", NOW,
+        "rev",
+        NOW,
         (
             plan("disabled", enabled=False, last_completed_vacuum_at=None),
             plan("skipped", skip_until=NOW + timedelta(seconds=1), last_completed_vacuum_at=None),
@@ -105,23 +115,31 @@ def test_disabled_and_currently_skipped_rooms_are_excluded() -> None:
 
 def test_priority_is_descending_then_due_time_then_area_id_for_stable_order() -> None:
     revision = PlanRevision(
-        "rev", NOW,
+        "rev",
+        NOW,
         (
             plan(
-                "zeta", priority=5, last_completed_vacuum_at=None,
+                "zeta",
+                priority=5,
+                last_completed_vacuum_at=None,
                 last_completed_vacuum_and_mop_at=None,
             ),
             plan(
-                "alpha", priority=5, last_completed_vacuum_at=None,
+                "alpha",
+                priority=5,
+                last_completed_vacuum_at=None,
                 last_completed_vacuum_and_mop_at=None,
             ),
             plan(
-                "older", priority=5,
+                "older",
+                priority=5,
                 last_completed_vacuum_at=NOW - timedelta(days=4),
                 last_completed_vacuum_and_mop_at=NOW - timedelta(days=4),
             ),
             plan(
-                "urgent", priority=10, last_completed_vacuum_at=None,
+                "urgent",
+                priority=10,
+                last_completed_vacuum_at=None,
                 last_completed_vacuum_and_mop_at=None,
             ),
         ),
@@ -134,14 +152,17 @@ def test_priority_is_descending_then_due_time_then_area_id_for_stable_order() ->
 
 def test_all_due_jobs_are_rejected_together_when_any_binding_is_invalid() -> None:
     revision = PlanRevision(
-        "rev", NOW,
+        "rev",
+        NOW,
         (
             plan(
-                "valid", last_completed_vacuum_at=None,
+                "valid",
+                last_completed_vacuum_at=None,
                 last_completed_vacuum_and_mop_at=None,
             ),
             plan(
-                "missing", last_completed_vacuum_at=None,
+                "missing",
+                last_completed_vacuum_at=None,
                 last_completed_vacuum_and_mop_at=None,
             ),
         ),
@@ -155,7 +176,8 @@ def test_all_due_jobs_are_rejected_together_when_any_binding_is_invalid() -> Non
 
 def test_mop_never_silently_degrades_when_binding_lacks_capability() -> None:
     revision = PlanRevision(
-        "rev", NOW,
+        "rev",
+        NOW,
         (
             plan(
                 "kitchen",

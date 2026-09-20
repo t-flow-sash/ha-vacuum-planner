@@ -6,6 +6,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv-dev/
 .env
 .vscode/
 .idea/

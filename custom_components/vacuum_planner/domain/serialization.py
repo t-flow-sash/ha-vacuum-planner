@@ -33,6 +33,10 @@ Payload = dict[str, Any]
 class SchemaVersionError(ValueError):
     """The payload cannot be safely interpreted by this codec."""
 
+    def __init__(self, version: object) -> None:
+        self.version = version
+        super().__init__(f"unsupported schema version: {version}")
+
 
 def _envelope(kind: str, data: Payload) -> Payload:
     return {"schema_version": SCHEMA_VERSION, "kind": kind, "data": data}
@@ -41,7 +45,7 @@ def _envelope(kind: str, data: Payload) -> Payload:
 def _data(payload: Payload, kind: str) -> Payload:
     version = payload.get("schema_version")
     if type(version) is not int or version != SCHEMA_VERSION:
-        raise SchemaVersionError(f"unsupported schema version: {version}")
+        raise SchemaVersionError(version)
     if payload.get("kind") != kind:
         raise ValueError(f"expected payload kind {kind}")
     data = payload.get("data")
@@ -135,13 +139,19 @@ def _room_dump(room: RoomPlan) -> Payload:
         "priority": room.priority,
         "skip_until": _dt_dump(room.skip_until),
         "last_completed_vacuum_at": _dt_dump(room.last_completed_vacuum_at),
-        "last_completed_vacuum_and_mop_at": _dt_dump(
-            room.last_completed_vacuum_and_mop_at
-        ),
+        "last_completed_vacuum_and_mop_at": _dt_dump(room.last_completed_vacuum_and_mop_at),
     }
 
 
 def _room_load(data: Payload) -> RoomPlan:
+    raw_preferred_mode = _string(data["preferred_mode"], "preferred_mode")
+    # Internal legacy restart migration: the removed automatic policy is
+    # canonicalized to the conservative retained vacuum policy.
+    preferred_mode = (
+        PreferredMode.VACUUM
+        if raw_preferred_mode == "automatic"
+        else PreferredMode(raw_preferred_mode)
+    )
     return RoomPlan(
         area_id=_string(data["area_id"], "area_id"),
         lane_id=_string(data["lane_id"], "lane_id"),
@@ -150,13 +160,11 @@ def _room_load(data: Payload) -> RoomPlan:
         vacuum_and_mop_interval_days=_optional_integer(
             data["vacuum_and_mop_interval_days"], "vacuum_and_mop_interval_days"
         ),
-        preferred_mode=PreferredMode(_string(data["preferred_mode"], "preferred_mode")),
+        preferred_mode=preferred_mode,
         priority=_integer(data["priority"], "priority"),
         skip_until=_dt(data.get("skip_until")),
         last_completed_vacuum_at=_dt(data.get("last_completed_vacuum_at")),
-        last_completed_vacuum_and_mop_at=_dt(
-            data.get("last_completed_vacuum_and_mop_at")
-        ),
+        last_completed_vacuum_and_mop_at=_dt(data.get("last_completed_vacuum_and_mop_at")),
     )
 
 
@@ -257,21 +265,21 @@ def _block_dump(block: QueueBlock) -> Payload:
 
 
 def _block_load(data: Payload) -> QueueBlock:
+    raw_kind = _string(data["kind"], "kind")
+    # Internal legacy restart migration: removed ad-hoc blocks remain recoverable,
+    # but are canonicalized into the only retained scheduled block kind.
+    kind = BlockKind.SCHEDULED if raw_kind == "adhoc" else BlockKind(raw_kind)
     return QueueBlock(
         block_id=_string(data["block_id"], "block_id"),
-        kind=BlockKind(_string(data["kind"], "kind")),
+        kind=kind,
         lane_id=_string(data["lane_id"], "lane_id"),
         plan_revision=_string(data["plan_revision"], "plan_revision"),
         idempotency_key=_string(data["idempotency_key"], "idempotency_key"),
         created_at=_dt_required(data["created_at"]),
         sealed_at=_dt(data.get("sealed_at")),
         state=BlockState(_string(data["state"], "state")),
-        job_ids=tuple(
-            _string(item, "job_id") for item in _array(data["job_ids"], "job_ids")
-        ),
-        dispatch_strategy=DispatchStrategy(
-            _string(data["dispatch_strategy"], "dispatch_strategy")
-        ),
+        job_ids=tuple(_string(item, "job_id") for item in _array(data["job_ids"], "job_ids")),
+        dispatch_strategy=DispatchStrategy(_string(data["dispatch_strategy"], "dispatch_strategy")),
         guarantee=BlockGuarantee(_string(data["guarantee"], "guarantee")),
         committed_at=_dt(data.get("committed_at")),
         completed_at=_dt(data.get("completed_at")),
@@ -382,12 +390,9 @@ def deserialize_ledger(payload: Payload) -> QueueLedger:
         schema_version=SCHEMA_VERSION,
         revision=_integer(data["revision"], "revision"),
         blocks=tuple(
-            _block_load(_object(item, "block"))
-            for item in _array(data["blocks"], "blocks")
+            _block_load(_object(item, "block")) for item in _array(data["blocks"], "blocks")
         ),
-        jobs=tuple(
-            _job_load(_object(item, "job")) for item in _array(data["jobs"], "jobs")
-        ),
+        jobs=tuple(_job_load(_object(item, "job")) for item in _array(data["jobs"], "jobs")),
         active_block_id=_optional_string(data.get("active_block_id"), "active_block_id"),
         last_reconciled_at=_dt(data.get("last_reconciled_at")),
     )
@@ -404,9 +409,20 @@ def serialize_planner_state(state: PlannerState) -> Payload:
     )
 
 
+def _migrate_planner_state_payload(payload: Payload) -> Payload:
+    """Upgrade the legacy atomic-root envelope without mutating stored input."""
+    version = payload.get("schema_version")
+    if type(version) is not int or version != 0:
+        return payload
+    if payload.get("kind") != "planner_state":
+        raise ValueError("expected payload kind planner_state")
+    data = _object(payload.get("data"), "payload data")
+    return _envelope("planner_state", dict(data))
+
+
 def deserialize_planner_state(payload: Payload) -> PlannerState:
     """Deserialize the complete persisted planner root."""
-    data = _data(payload, "planner_state")
+    data = _data(_migrate_planner_state_payload(payload), "planner_state")
     for required in ("plan_revision", "ledger"):
         if required not in data:
             raise ValueError(f"missing {required}")

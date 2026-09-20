@@ -13,108 +13,76 @@ Entity-Zustände sind eine UI-/Automationsprojektion. Plan und Queue werden auss
 | `sensor` | Nächste Aktion | lesbarer nächster Raum/Modus | – |
 | `sensor` | Ausstehende Aufgaben | Anzahl offener Jobs | – |
 | `sensor` | Aktuelle Phase | Block-/Jobphase | – |
-| `sensor` | Nächster Start | Timestamp | – |
 | `sensor` | Capability-Stufe | T0–T3 als UX-Kurzform | diagnostic |
+| `sensor` | Queue | Gesamtzahl der Jobs; begrenzte sichere Projektion in den Attributen | – |
 | `binary_sensor` | Bereit | alle Mappings/Capabilities ausführbar | diagnostic |
 | `binary_sensor` | Eingriff erforderlich | Repair/uncertain/Mappingproblem | diagnostic |
 | `button` | Nächste fällige Aufgabe starten | kanonisches One-Tap über `vacuum_planner.start_next` | – |
 | `button` | Aktuellen Block abbrechen | mit sicherer Bestätigungssemantik in UI | – |
-| `event` | Lifecycle | normalisierte Block-/Jobereignisse | – |
+
 
 Selten benötigte Diagnoseentities sind standardmäßig deaktiviert.
 
-## Raumbezogene Entities
-
-Diese Entities referenzieren eine HA-Area, bleiben aber am Planner-Service-Device. Es wird **kein künstliches Raumgerät** erzeugt.
-
-| Plattform | Entity | Pflicht/Regel |
-|---|---|---|
-| `switch` | Raum im Plan aktiv | ja |
-| `binary_sensor` | heute fällig | ja |
-| `sensor` | Raumstatus | ja |
-| `sensor` | nächste fällige Aufgabe/Zeit | ja |
-| `number` | Saugintervall in Tagen | ja |
-| `number` | Saugen+Wischen-Intervall | nur mit Capability |
-| `number` | Priorität | ja |
-| `select` | `automatic`, `vacuum`, `vacuum_and_mop` | Wischoption nur mit Capability |
-| `button` | One-Tap fällige Aufgabe | ja |
-| `button` | heute überspringen | ja |
-| `button` | auf morgen verschieben | soll |
-| `button` | Extra-Reinigung anhängen | soll |
-
-`mop_only` ist kein Select-Wert. Wird eine Capability nachträglich verloren, wird die betroffene Entity unavailable/ausgeblendet und ein Repair erzeugt; ein Plan wird nicht still degradiert.
-
 ## Entity-Attribute
 
-Attribute bleiben klein, stabil und recorderfreundlich. Beispiele:
+Attribute bleiben klein, stabil und recorderfreundlich. Der Status-Sensor liefert keine zusätzlichen State-Attribute. Der Sensor „Nächste Aktion“ liefert ausschließlich:
 
 ```yaml
-# sensor.<instance>_status
-active_block_id: "2f3f..."
-guarantee: planner_atomic
-dispatch_strategy: native_batch
-robot_lane_count: 1
-
 # sensor.<instance>_next_action
 area_id: kitchen
+area_name: Küche
 mode: vacuum_and_mop
 due_at: "2026-09-16T08:00:00+02:00"
 ```
 
-Keine vollständige Queue, History oder Mappingmatrix als dauerhaftes State-Attribut. Detaillierte Queue-Daten kommen über eine read-only Response-Action bzw. validierte WebSocket-API.
+Der Queue-Sensor liefert als Zustand die Gesamtzahl der Jobs. Seine Attribute sind
+`items`, `projected_count`, `revision`, `total_count` und `truncated`; jede Zeile in
+`items` enthält nur `area_name`, `mode`, `position` und `status`. Die Projektion ist auf
+20 sichere Zeilen begrenzt. Vollständige read-only Queue-Daten kommen ausschließlich
+über die Response-Action `get_queue`; History und Mappingmatrix werden nicht als
+dauerhafte State-Attribute veröffentlicht.
 
 ## Actions
 
 | Action | Zweck | zentrale Felder |
 |---|---|---|
-| `start_next` | kanonische öffentliche One-Tap-Action; startet die nächste fällige Aufgabe | Planner-Ziel |
-| `start_due_block` | technische Block-Action; fälligen Snapshot versiegeln und committen | Planner-Ziel, optional Idempotency-Key |
-| `enqueue_area` | Area hinten anhängen | Planner-Ziel, `area_id`, Modus, Wiederholung bestätigen |
+| `start_next` | kanonische öffentliche One-Tap-Action; materialisiert und startet genau eine nächste fällige Aufgabe | Planner-Ziel |
+
 | `skip_area_today` | aktuelle Tagesfälligkeit überspringen | Planner-Ziel, `area_id` |
 | `postpone_area` | Fälligkeit verschieben | Planner-Ziel, `area_id`, Datum/Tage |
-| `cancel_block` | laufenden/offenen Block abbrechen | Planner-Ziel, `block_id` |
+| `cancel_block` | nur `sealed` mit ausschließlich `pending`-Jobs sicher abbrechen | Planner-Ziel, `block_id` |
 | `resolve_uncertain_run` | Recoveryentscheidung | Planner-Ziel, Run/Job, explizite Auflösung |
-| `get_queue` | read-only Queue-Response | Planner-Ziel, optional Zeitraum |
+| `get_queue` | read-only Queue-Response | Planner-Ziel |
 
 Actions adressieren niemals implizit „den ersten Planner“. Öffentliche Felder verwenden HA-Area-IDs, nie rohe Segment-IDs. Mutationen laufen immer durch denselben Coordinator/Lock.
 
-Buttons, Dashboard und normale Automationen verwenden für One-Tap ausschließlich `vacuum_planner.start_next`. `vacuum_planner.start_due_block` bleibt der internen bzw. fortgeschrittenen Blocksteuerung vorbehalten und ist kein Synonym für One-Tap.
+`cancel_block` ist bewusst eng begrenzt: Sobald ein Block oder Job möglicherweise externe Arbeit ausgelöst hat, wird die Action abgelehnt. Eine Adapter-Cancel-Bestätigung ist nicht implementiert; laufende, bestätigte oder unsichere externe Arbeit wird daher nicht als erfolgreich abgebrochen dargestellt.
+
+Buttons, Dashboard und normale Automationen verwenden für One-Tap ausschließlich `vacuum_planner.start_next`.
 
 ## `get_queue`-Response (Beispiel)
 
 ```yaml
 revision: 42
-block:
-  block_id: "2f3f..."
-  state: running
-  guarantee: planner_atomic
-  jobs:
-    - job_id: "8a12..."
-      area_id: kitchen
-      area_name: Küche
-      mode: vacuum_and_mop
-      state: completed
-      position: 1
-    - job_id: "19bc..."
-      area_id: hallway
-      area_name: Flur
-      mode: vacuum
-      state: running
-      position: 2
-appended_jobs: []
+blocks:
+  - block_id: "2f3f..."
+    kind: scheduled
+    state: running
+    guarantee: planner_atomic
+    job_ids: ["8a12..."]
+jobs:
+  - job_id: "8a12..."
+    block_id: "2f3f..."
+    area_id: kitchen
+    area_name: Küche
+    mode: vacuum_and_mop
+    state: running
+    position: 0
 ```
 
-## Events
+## Statusquelle
 
-- `block_sealed`
-- `block_committed`
-- `block_completed`
-- `job_started`
-- `job_completed`
-- `job_failed`
-- `run_uncertain`
-
-Events enthalten Planner-/Block-/Job-ID, Area-ID, normalisierten Modus und Ergebnis. Keine Credentials, Segment-IDs oder unredigierten Adapterpayloads.
+Entities und der persistente Store sind die alleinigen Statusquellen der Beta.
 
 ## Dashboard-Vertrag
 

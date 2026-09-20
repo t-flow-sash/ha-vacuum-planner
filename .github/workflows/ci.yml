@@ -32,9 +32,11 @@ jobs:
           python -m pip install --require-hashes -r requirements-ci.txt
           python -m pip install --no-deps --no-build-isolation -e .
       - name: Run tests with coverage
-        run: python -m pytest --cov=custom_components/vacuum_planner --cov-report=term-missing -q
+        run: python -m pytest --cov=custom_components/vacuum_planner --cov-report=term-missing --cov-fail-under=90 -q
       - name: Run Ruff
-        run: ruff check .
+        run: |
+          ruff check .
+          ruff format --check .
       - name: Run strict mypy
         run: mypy . --strict
       - name: Compile Python
@@ -48,6 +50,39 @@ jobs:
           python -m json.tool custom_components/vacuum_planner/translations/en.json >/dev/null
       - name: Scan Python for common security defects
         run: bandit -q -r custom_components/vacuum_planner
+
+  home-assistant-contract:
+    name: Real Home Assistant lifecycle (${{ matrix.homeassistant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - homeassistant: "2026.3.1"
+            pytest_plugin: "0.13.317"
+          - homeassistant: "2026.9.3"
+            pytest_plugin: "0.13.366"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.14.4"
+      - name: Install pinned Home Assistant test tooling
+        run: python -m pip install pytest-homeassistant-custom-component==${{ matrix.pytest_plugin }}
+      - name: Verify pinned Home Assistant version
+        run: |
+          python - <<'PY'
+          from importlib.metadata import version
+          expected = "${{ matrix.homeassistant }}"
+          actual = version("homeassistant")
+          if actual != expected:
+              raise SystemExit(f"expected Home Assistant {expected}, got {actual}")
+          print(f"Home Assistant {actual}")
+          PY
+      - name: Run lifecycle test
+        run: python -m pytest -c tests_ha/pytest.ini tests_ha -q
 
   hassfest:
     name: Home Assistant structure

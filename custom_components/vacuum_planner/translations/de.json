@@ -40,7 +40,113 @@
           "ready": "Bereit",
           "running": "Läuft"
         }
+      },
+      "next_action": {
+        "name": "Nächste Aktion"
+      },
+      "pending_count": {
+        "name": "Ausstehende Aufgaben"
+      },
+      "queue": {
+        "name": "Warteschlange"
+      },
+      "current_phase": {
+        "name": "Aktuelle Phase"
+      },
+      "capability_tier": {
+        "name": "Capability-Stufe"
       }
+    },
+    "switch": {
+      "planning": {
+        "name": "Planung"
+      }
+    },
+    "binary_sensor": {
+      "ready": {
+        "name": "Bereit"
+      },
+      "attention": {
+        "name": "Eingriff erforderlich"
+      }
+    },
+    "button": {
+      "start_next": {
+        "name": "Nächste fällige Aufgabe starten"
+      },
+      "cancel_current_block": {
+        "name": "Aktuellen Block abbrechen"
+      }
+    }
+  },
+  "issues": {
+    "missing_registry": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Lade den Eintrag neu. Falls die Topologie weiterhin ungültig ist, lösche ihn und richte ihn neu ein."
+        },
+        "step": {
+          "init": {
+            "description": "Der gespeicherte Registrierungseintrag des Saugroboters ist nicht mehr verfügbar. Stelle ihn wieder her und lade den Eintrag neu, oder lösche den Eintrag und richte ihn erneut ein.",
+            "title": "Registrierungseintrag des Saugroboters fehlt"
+          }
+        }
+      },
+      "title": "Registrierungseintrag des Saugroboters fehlt"
+    },
+    "missing_mapping": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Lade den Eintrag neu. Falls die Topologie weiterhin ungültig ist, lösche ihn und richte ihn neu ein."
+        },
+        "step": {
+          "init": {
+            "description": "Mindestens ein konfigurierter Bereich besitzt keine gültige Saugroboter-Zuordnung. Stelle die Zuordnung wieder her und lade den Eintrag neu, oder lösche den Eintrag und richte ihn erneut ein.",
+            "title": "Bereichszuordnung fehlt"
+          }
+        }
+      },
+      "title": "Bereichszuordnung fehlt"
+    },
+    "lost_capability": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Lade den Eintrag neu. Falls die Topologie weiterhin ungültig ist, lösche ihn und richte ihn neu ein."
+        },
+        "step": {
+          "init": {
+            "description": "Der konfigurierte Saugroboter unterstützt die native Bereichsreinigung nicht mehr. Stelle die Unterstützung wieder her und lade den Eintrag neu, oder lösche den Eintrag und richte ihn mit einem kompatiblen Saugroboter erneut ein.",
+            "title": "Fähigkeit zur Bereichsreinigung ging verloren"
+          }
+        }
+      },
+      "title": "Fähigkeit zur Bereichsreinigung ging verloren"
+    },
+    "removed_areas": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Lade den Eintrag neu. Falls die Topologie weiterhin ungültig ist, lösche ihn und richte ihn neu ein."
+        },
+        "step": {
+          "init": {
+            "description": "Mindestens ein konfigurierter Bereich wurde entfernt. Stelle Bereich und Zuordnung wieder her und lade den Eintrag neu, oder lösche den Eintrag und richte ihn erneut ein.",
+            "title": "Konfigurierte Saugroboter-Bereiche wurden entfernt"
+          }
+        }
+      },
+      "title": "Konfigurierte Saugroboter-Bereiche wurden entfernt"
+    },
+    "unresolved_external_run": {
+      "title": "Externer Saugroboterlauf muss aufgelöst werden",
+      "description": "Das Ergebnis eines übertragenen Saugroboterlaufs ist ungeklärt. Prüfe die Warteschlange und löse den ungeklärten Job ausdrücklich auf, bevor du ihn wiederholst."
+    },
+    "corrupt_store": {
+      "title": "Planerspeicher ist beschädigt",
+      "description": "Der gespeicherte Zustand von Vacuum Planner ist ungültig und wurde nicht überschrieben. Stelle eine gültige Sicherung wieder her oder entferne den beschädigten Speicher manuell."
+    },
+    "future_store": {
+      "title": "Planerspeicher stammt aus einer neueren Version",
+      "description": "Der gespeicherte Zustand von Vacuum Planner verwendet ein neueres, nicht unterstütztes Format. Aktualisiere die Integration oder stelle eine kompatible Sicherung wieder her."
     }
   },
   "options": {
@@ -50,31 +156,97 @@
           "dry_run": "Testbetrieb (Saugroboter nicht steuern)",
           "planning_enabled": "Planungspräferenz aktiviert"
         },
-        "description": "Konfiguriert das Planerverhalten. Der Testbetrieb ist standardmäßig aktiv und verhindert die Steuerung des Saugroboters.",
+        "description": "Konfiguriert das Planerverhalten. Der Testbetrieb ist standardmäßig aktiv und verhindert die Steuerung des Saugroboters. Warnung: Das Deaktivieren ermöglicht echte Saugroboterbefehle; Befehle werden weiterhin nur nach einer ausdrücklichen Aktion gesendet.",
         "title": "Planerverhalten"
       }
     }
   },
+
   "services": {
-    "get_queue": {
-      "description": "Gibt die aktuelle persistierte Warteschlange zurück, ohne den Planerzustand zu ändern.",
-      "fields": {
-        "config_entry_id": {
-          "description": "Wähle die auszulesende Vacuum-Planner-Instanz aus.",
-          "name": "Planerinstanz"
-        }
-      },
-      "name": "Warteschlange abrufen"
-    },
     "start_next": {
-      "description": "Versiegelt die aktuell fälligen Aufgaben idempotent als Testblock, ohne den Saugroboter zu steuern.",
+      "name": "Nächste fällige Aufgabe starten",
+      "description": "Startet die nächste fällige Aufgabe über den kanonischen One-Tap-Pfad.",
       "fields": {
         "config_entry_id": {
-          "description": "Wähle die zu startende Vacuum-Planner-Instanz aus.",
-          "name": "Planerinstanz"
+          "name": "Planerinstanz",
+          "description": "Wähle die ausdrücklich adressierte Vacuum-Planner-Instanz."
         }
-      },
-      "name": "Nächste fällige Aufgaben starten"
+      }
+    },
+
+    "skip_area_today": {
+      "name": "Bereich heute überspringen",
+      "description": "Überspringt die aktuelle Tagesfälligkeit eines konfigurierten Bereichs.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planerinstanz",
+          "description": "Wähle die ausdrücklich adressierte Vacuum-Planner-Instanz."
+        },
+        "area_id": {
+          "name": "Bereich",
+          "description": "Wähle einen konfigurierten Home-Assistant-Bereich."
+        }
+      }
+    },
+    "postpone_area": {
+      "name": "Bereich verschieben",
+      "description": "Verschiebt die Fälligkeit eines konfigurierten Bereichs um explizite Tage.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planerinstanz",
+          "description": "Wähle die ausdrücklich adressierte Vacuum-Planner-Instanz."
+        },
+        "area_id": {
+          "name": "Bereich",
+          "description": "Wähle einen konfigurierten Home-Assistant-Bereich."
+        },
+        "days": {
+          "name": "Tage",
+          "description": "Positive Anzahl von Tagen, um die Fälligkeit zu verschieben."
+        }
+      }
+    },
+    "cancel_block": {
+      "name": "Block abbrechen",
+      "description": "Bricht nur einen sicher lokal abbrechbaren, noch nicht übertragenen Block ab.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planerinstanz",
+          "description": "Wähle die ausdrücklich adressierte Vacuum-Planner-Instanz."
+        },
+        "block_id": {
+          "name": "Block-ID",
+          "description": "Planer-Block-ID aus der Warteschlangen-Action."
+        }
+      }
+    },
+    "resolve_uncertain_run": {
+      "name": "Ungeklärten Lauf auflösen",
+      "description": "Löst einen ungeklärten Job nur mit ausdrücklicher Retry-safe-Entscheidung auf.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planerinstanz",
+          "description": "Wähle die ausdrücklich adressierte Vacuum-Planner-Instanz."
+        },
+        "job_id": {
+          "name": "Job-ID",
+          "description": "Ungeklärte Planer-Job-ID aus der Warteschlangen-Action."
+        },
+        "resolution": {
+          "name": "Auflösung",
+          "description": "Bestätigt ausdrücklich, dass ein erneuter Versuch sicher ist."
+        }
+      }
+    },
+    "get_queue": {
+      "name": "Warteschlange abrufen",
+      "description": "Gibt die persistierte Warteschlange ohne Vendor-Zieldaten zurück.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planerinstanz",
+          "description": "Wähle die ausdrücklich adressierte Vacuum-Planner-Instanz."
+        }
+      }
     }
   }
 }

@@ -75,14 +75,8 @@ def _select_due(plan: RoomPlan, now: datetime) -> tuple[Mode, datetime] | None:
     if plan.preferred_mode is PreferredMode.VACUUM:
         return (Mode.VACUUM, vacuum_due) if vacuum_due <= now else None
     if plan.preferred_mode is PreferredMode.VACUUM_AND_MOP:
-        return (
-            (Mode.VACUUM_AND_MOP, mop_due)
-            if mop_due is not None and mop_due <= now
-            else None
-        )
-    if mop_due is not None and mop_due <= now:
-        return Mode.VACUUM_AND_MOP, mop_due
-    return (Mode.VACUUM, vacuum_due) if vacuum_due <= now else None
+        return (Mode.VACUUM_AND_MOP, mop_due) if mop_due is not None and mop_due <= now else None
+    raise ValueError("unsupported preferred mode")
 
 
 def build_due_snapshot(

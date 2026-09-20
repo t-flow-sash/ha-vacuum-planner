@@ -46,16 +46,14 @@ Der Planner wird als `DeviceEntryType.SERVICE` registriert. Vorhandene Sauger-De
 - Hinweis auf Dashboard-Anlegeschritt;
 - danach Config Entry plus initiale Planrevision schreiben.
 
-## 3. Reconfigure und Options
+## 3. Topologieänderungen und Options
 
-### Reconfigure Flow (Topologie)
+### Topologieänderungen
 
-- Vacuum-Entity hinzufügen/entfernen/ersetzen;
-- Area-Auswahl ändern;
-- Mapping neu prüfen;
-- Adapter/Robot Lane ändern.
-
-Reconfigure aktualisiert denselben Entry. Vor Änderungen wird geprüft, ob aktive Blöcke betroffen wären; eine laufende Lane wird nicht still neu gebunden.
+Die Minimum-Safe-Beta ändert eine bestehende Topologie nicht im laufenden Entry. Für einen anderen
+Sauger, andere Areas oder ein geändertes Mapping muss der Config Entry gelöscht und anschließend
+über den initialen Config Flow neu eingerichtet werden. Dadurch wird keine neue Topologie
+automatisch in eine vorhandene Queue oder Historie übernommen.
 
 ### Options Flow (Verhalten)
 
@@ -79,7 +77,10 @@ Dauerhaft benutzerlösbare Zustände erzeugen deduplizierte Issues:
 - Recovery eines externen Runs ist unklar;
 - Store ist beschädigt oder nicht migrierbar.
 
-Temporäre `unavailable`-Zustände erzeugen zunächst normale Status-/Retry-Fehler, nicht sofort Repairs. Fix-Flows führen gezielt in Reconfigure/Recovery und löschen das Issue nach erfolgreicher Lösung.
+Entity-, Area-Registry- und relevante Vacuum-State-/Capability-Verluste verriegeln die laufende
+Instanz dauerhaft fail-closed. Ein Repair erklärt, dass zunächst ein Reload und bei weiterhin
+ungültiger Topologie das Löschen und Neueinrichten des Entries erforderlich ist. Die Instanz
+übernimmt keine reparierte oder neue Topologie automatisch im laufenden Betrieb.
 
 ## 5. Diagnostics
 
@@ -99,23 +100,18 @@ Entity-/Area-IDs, Anzeigenamen, Segment-IDs, Zeitverläufe und Zugangsdaten werd
 
 Eine Backend-Custom-Integration soll bestehende Lovelace-Dashboards nicht ungefragt ändern, keine internen Storage-Dateien manipulieren und keine privaten APIs für die Installation verwenden. Ein vollständig stilles „als Hauptdashboard installieren“ ist daher kein belastbares Ziel.
 
-### Zielweg: Custom Dashboard Strategy
+### Aktueller Beta-Kandidat
 
-Die Integration liefert:
+Ausgeliefert wird ein [importierbares Standardkarten-Dashboard](../dashboard/README.md)
+mit vollständigen `views`
+und Sections sowie Mock-States. Der Nutzer gibt den erzeugten Planner-Entities einmal stabile,
+dokumentierte Entity-IDs und importiert die Raw-Konfiguration bewusst in ein neues Dashboard.
+Eine Markdown-Standardkarte rendert das begrenzte `items`-Attribut der real implementierten
+Queue-Sensorentity bei Coordinator-Updates dynamisch. Die Integration verändert weiterhin keine
+bestehenden Dashboards oder Lovelace-Storage-Dateien.
 
-1. universelle Entities/Actions als Backend-Contract;
-2. eine versionierte Frontend-Ressource mit Custom Dashboard Strategy;
-3. einen kurzen Onboarding-Schritt: **Einstellungen → Dashboards → Dashboard hinzufügen → Community Dashboard „Saugplanung“**;
-4. danach dynamische Generierung aus Config Entries, Registry und Planner-Daten.
-
-Das Ergebnis ist ein eigenes Sidebar-/Hauptdashboard ohne YAML und ohne installationsspezifische Entity-IDs. Der Nutzer bestätigt die Anlage einmal; Aktualisierungen der Räume/Entities fließen automatisch ein.
-
-### Progressive Verbesserung
-
-- **Ohne Frontend-Ressource:** Standard-Entities und Actions bleiben vollständig bedienbar.
-- **Mit Strategy:** responsive Standardansicht, Queue-Projektion und Raumplan.
-- **Optional später Custom Panel/Card:** nur wenn editierbare Queue, Drag-and-drop oder komplexe Timeline dies rechtfertigen.
-- Keine harte Abhängigkeit von Mushroom, `card_mod` oder anderen HACS-Cards im universellen Standarddashboard.
+Es besteht keine harte Abhängigkeit von Mushroom, `card_mod` oder anderen
+HACS-Erweiterungen im universellen Standarddashboard.
 
 ### Informationsarchitektur
 
@@ -123,7 +119,7 @@ Das Ergebnis ist ein eigenes Sidebar-/Hauptdashboard ohne YAML und ohne installa
 
 1. „Nächste Reinigung“ (Status, Zeit, Modus, Roboter);
 2. große One-Tap-Aktion „Fällige Aufgabe starten“, die ausschließlich `vacuum_planner.start_next` aufruft;
-3. „Heute geplant“: nur Jobs des aktuellen Blocks plus klar getrennte Anhänge.
+3. „Queue“: ausschließlich tatsächlich materialisierte Jobs aus der begrenzten Queue-Sensorprojektion.
 
 **Below the fold**
 
@@ -139,11 +135,11 @@ Statusdarstellung:
 - `failed`/`uncertain`: Warnung plus konkrete Aktion;
 - keine Platzhalter für nicht geplante Räume.
 
-Die Dashboard-Strategy verwendet `vacuum_planner.start_due_block` nicht für One-Tap; diese Action bleibt eine technische Block-Action.
-
 ## 7. Dashboard-Datenweg
 
-Kompakte Zustände kommen aus Entities. Eine potenziell große oder schnell wechselnde Queue wird nicht als riesiges Recorder-relevantes Attribut modelliert. Die Strategy lädt Details über eine validierte, read-only WebSocket-API oder eine Response-Action und abonniert normalisierte Events für Aktualisierungen.
+Kompakte Zustände kommen aus Entities. Die Queue-Sensorprojektion ist auf 20 sichere
+Einträge begrenzt; vollständige read-only Daten liefert ausschließlich die Response-Action
+`vacuum_planner.get_queue`. Coordinator-Updates aktualisieren die Entities.
 
 ## 8. Abnahmekriterien
 
@@ -151,6 +147,6 @@ Kompakte Zustände kommen aus Entities. Eine potenziell große oder schnell wech
 - fehlendes Mapping blockiert verständlich und reparierbar;
 - Dashboard in einem bestätigten Schritt anlegbar;
 - kein Vendor-Entity-Verweis in der UI-Konfiguration;
-- Standardfunktion bleibt ohne Custom Cards nutzbar;
+- Standardfunktion bleibt allein mit Home-Assistant-Standardkarten nutzbar;
 - Tablet, Desktop und Mobile haben klare Touch-/Fokusführung;
 - die UI unterscheidet Planner- und Robot-Atomizität korrekt.

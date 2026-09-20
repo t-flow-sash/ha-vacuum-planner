@@ -35,15 +35,23 @@ class IDs:
 
 def ledger_with_jobs(count: int = 1) -> QueueLedger:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         tuple(
             SnapshotJob(f"area-{index}", f"Area {index}", index, Mode.VACUUM, 0, NOW)
             for index in range(count)
         ),
     )
     return start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.PLANNER_SEQUENTIAL, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.PLANNER_SEQUENTIAL,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
 
 
@@ -88,9 +96,7 @@ def test_commit_rejects_blank_external_run_correlation() -> None:
     ledger = ledger_with_jobs().replace_block_state("id-1", BlockState.COMMITTING, NOW)
 
     with pytest.raises(ValueError, match="adapter_run_id must not be empty"):
-        ledger.replace_block_state(
-            "id-1", BlockState.COMMITTED, NOW, adapter_run_id="   "
-        )
+        ledger.replace_block_state("id-1", BlockState.COMMITTED, NOW, adapter_run_id="   ")
 
 
 def test_invalid_block_and_job_transitions_are_rejected() -> None:
@@ -113,12 +119,20 @@ def test_dispatch_requires_successfully_committed_parent(parent_state: BlockStat
 
 def test_committing_dispatching_jobs_require_native_batch_strategy() -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         (SnapshotJob("area", "Area", (), Mode.VACUUM, 0, NOW),),
     )
     sealed = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     committing = begin_native_batch_commit(sealed, "id-1", NOW)
     sequential_block = replace(
@@ -159,9 +173,7 @@ def test_retry_keeps_identity_and_resets_previous_attempt_lifecycle() -> None:
         "id-2", JobState.ACCEPTED, NOW, adapter_token="previous-attempt"
     )
     ledger = ledger.replace_job_state("id-2", JobState.RUNNING, NOW)
-    ledger = ledger.replace_job_state(
-        "id-2", JobState.FAILED, NOW, error_code="adapter_error"
-    )
+    ledger = ledger.replace_job_state("id-2", JobState.FAILED, NOW, error_code="adapter_error")
 
     retried = ledger.replace_job_state("id-2", JobState.DISPATCHING, NOW)
 
@@ -175,16 +187,12 @@ def test_retry_keeps_identity_and_resets_previous_attempt_lifecycle() -> None:
 
 
 def test_cancel_of_accepted_or_running_job_requires_adapter_confirmation() -> None:
-    ledger = running_ledger_with_jobs().replace_job_state(
-        "id-2", JobState.DISPATCHING, NOW
-    )
+    ledger = running_ledger_with_jobs().replace_job_state("id-2", JobState.DISPATCHING, NOW)
     ledger = ledger.replace_job_state("id-2", JobState.ACCEPTED, NOW)
 
     with pytest.raises(ValueError, match="confirmation"):
         ledger.replace_job_state("id-2", JobState.CANCELLED, NOW)
-    cancelled = ledger.replace_job_state(
-        "id-2", JobState.CANCELLED, NOW, adapter_confirmed=True
-    )
+    cancelled = ledger.replace_job_state("id-2", JobState.CANCELLED, NOW, adapter_confirmed=True)
 
     assert cancelled.jobs[0].state is JobState.CANCELLED
 
@@ -207,14 +215,14 @@ def test_partial_requires_mixed_terminal_job_results() -> None:
     mixed = mixed.replace_job_state("id-2", JobState.COMPLETED, NOW)
     mixed = mixed.replace_job_state("id-3", JobState.CANCELLED, NOW)
 
-    assert mixed.replace_block_state("id-1", BlockState.PARTIAL, NOW).blocks[0].state \
+    assert (
+        mixed.replace_block_state("id-1", BlockState.PARTIAL, NOW).blocks[0].state
         is BlockState.PARTIAL
+    )
 
 
 def test_uncertain_is_not_a_success_and_has_no_finished_timestamp() -> None:
-    ledger = running_ledger_with_jobs().replace_job_state(
-        "id-2", JobState.DISPATCHING, NOW
-    )
+    ledger = running_ledger_with_jobs().replace_job_state("id-2", JobState.DISPATCHING, NOW)
     ledger = ledger.replace_job_state("id-2", JobState.ACCEPTED, NOW)
     uncertain = ledger.replace_job_state("id-2", JobState.UNCERTAIN, NOW)
 
@@ -231,9 +239,7 @@ def test_uncertain_job_can_only_continue_after_explicit_safe_retry_resolution() 
     ledger = ledger.replace_job_state("id-2", JobState.UNCERTAIN, NOW)
     ledger = ledger.replace_block_state("id-1", BlockState.UNCERTAIN, NOW)
 
-    resolved = resolve_uncertain_job(
-        ledger, "id-2", UncertainResolution.RETRY_SAFE, NOW
-    )
+    resolved = resolve_uncertain_job(ledger, "id-2", UncertainResolution.RETRY_SAFE, NOW)
 
     assert resolved.jobs[0].state is JobState.FAILED
     assert resolved.jobs[0].finished_at == NOW
@@ -244,19 +250,25 @@ def test_uncertain_job_can_only_continue_after_explicit_safe_retry_resolution() 
 
 def test_precommit_native_batch_resolution_terminally_fails_the_block() -> None:
     snapshot = PlanSnapshot(
-        "rev", "lane", NOW,
+        "rev",
+        "lane",
+        NOW,
         (SnapshotJob("area", "Area", (), Mode.VACUUM, 0, NOW),),
     )
     sealed = start_due_block(
-        QueueLedger.empty(), snapshot, "lane", "today", NOW, IDs(),
-        DispatchStrategy.NATIVE_BATCH, BlockGuarantee.PLANNER_ATOMIC,
+        QueueLedger.empty(),
+        snapshot,
+        "lane",
+        "today",
+        NOW,
+        IDs(),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
     ).ledger
     committing = begin_native_batch_commit(sealed, "id-1", NOW)
     uncertain = quarantine_block_dispatch(committing, "id-1", NOW)
 
-    resolved = resolve_uncertain_job(
-        uncertain, "id-2", UncertainResolution.RETRY_SAFE, NOW
-    )
+    resolved = resolve_uncertain_job(uncertain, "id-2", UncertainResolution.RETRY_SAFE, NOW)
 
     assert resolved.jobs[0].state is JobState.FAILED
     assert resolved.blocks[0].state is BlockState.FAILED

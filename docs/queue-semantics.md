@@ -6,28 +6,27 @@
 - **Snapshot:** unveränderliche Auswertung einer Planrevision zu einem Zeitpunkt.
 - **Block:** geordnete Jobmenge aus einem Snapshot.
 - **Job:** atomare fachliche Raumaufgabe `vacuum` oder `vacuum_and_mop`.
-- **Ad-hoc-Job:** nach dem versiegelten Tagesblock angehängte Aufgabe.
+
 - **Ledger:** autoritative persistente Plannerqueue.
 - **Robot Queue:** externe Geräte-/Herstellerqueue, falls vorhanden.
 
 ## Garantien
 
-### Planner-Atomizität (verbindlich)
+### Planner-Persistenzgrenze (verbindlich)
 
-Beim Start geschieht innerhalb einer Serialisierungsgrenze:
+Bei jedem Aufruf von `start_next` geschieht innerhalb einer Serialisierungsgrenze:
 
-1. fällige Räume und Modus berechnen;
-2. alle Area-Bindings und Capabilities validieren;
-3. vollständigen Snapshot materialisieren;
-4. `block_id`, Job-IDs und unveränderliche Reihenfolge erzeugen;
-5. Block als `sealed` atomar persistieren;
-6. erst danach den externen Commit starten.
+1. fällige Aufgaben berechnen und validieren;
+2. genau die nächste Aufgabe auswählen;
+3. für diese eine Aufgabe `block_id`, Job-ID und Snapshot erzeugen;
+4. den Ein-Job-Block als `sealed` atomar persistieren;
+5. erst danach den externen Commit starten.
 
-Es ist nie ein halber Tagesblock im Ledger sichtbar. Neue Ad-hoc-Jobs werden erst nach geöffnetem Append-Gate hinter den Block geschrieben.
+Die öffentliche Beta materialisiert pro `start_next` genau eine nächste fällige Aufgabe. Sie verspricht weder die Materialisierung eines kompletten Tagesplans noch einen Mehrraum-Commit. In die Queue gelangen ausschließlich fällige Planaufgaben.
 
 ### Robot-Atomizität (capability-abhängig)
 
-Nur ein Adapter mit `atomic_device_commit` darf bestätigen, dass der Block unteilbar in die Gerätequeue übernommen wurde. `vacuum.clean_area` mit mehreren Areas oder mehrere Serviceaufrufe beweisen dies nicht automatisch.
+Nur ein Adapter mit `atomic_device_commit` dürfte eine unteilbare Übernahme in eine Gerätequeue bestätigen. Der ausgelieferte Standardpfad gibt für den einzelnen Job keine weitergehende Gerätequeue-Garantie ab; Serviceannahme ist insbesondere kein Reinigungserfolg.
 
 ## Persistenzschema
 
@@ -46,7 +45,7 @@ Nur ein Adapter mit `atomic_device_commit` darf bestätigen, dass der Block unte
 | Feld | Bedeutung |
 |---|---|
 | `block_id` | stabile UUID |
-| `kind` | `scheduled` oder `adhoc` |
+| `kind` | ausschließlich `scheduled` |
 | `lane_id` | ausführender Roboter |
 | `plan_revision` | Quellrevision |
 | `idempotency_key` | Deduplizierung des Startaufrufs |
@@ -103,7 +102,7 @@ accepted/running -> cancelled (nur nach bestätigtem Adapterresultat)
 ### Invarianten
 
 1. Reihenfolge und Jobs eines `sealed` Blocks werden nicht mutiert.
-2. Ad-hoc-Aufgaben sind eigene Jobs/Blöcke hinter dem geplanten Block; nie Einfügung in dessen Mitte.
+2. Jobs entstehen ausschließlich aus fälligen Plänen.
 3. `last_completed_vacuum*` wird ausschließlich nach `completed` aktualisiert.
 4. Versand/Akzeptanz ist kein Reinigungserfolg.
 5. `vacuum_and_mop` erfüllt bei Erfolg zugleich die Saugfälligkeit.
@@ -111,9 +110,9 @@ accepted/running -> cancelled (nur nach bestätigtem Adapterresultat)
 7. Retry verwendet dieselbe Job-ID, erhöht `attempt` und setzt eine idempotente Adapterkorrelation, sofern möglich.
 8. Kein partielles Sealing: Ein ungültiges Mapping oder ein unzulässiger Modus weist den gesamten Block vor Commit ab.
 
-## Start- und Append-Protokoll
+## Startprotokoll
 
-### `start_due_block`
+### Interne Materialisierung durch `start_next`
 
 Unter Lane-Lock:
 
@@ -121,38 +120,25 @@ Unter Lane-Lock:
 2. einen offenen Block derselben Lane mit anderem Key mit `LaneAlreadyOpenError` ablehnen;
 3. Snapshot berechnen und validieren;
 4. leeren Snapshot als `no_work` melden, ohne Block zu erzeugen;
-5. Block versiegeln und synchron atomar speichern;
-6. Append-Gate schließen;
-7. Adaptercommit ausführen;
-8. Ergebnis persistieren (`committed`, `failed` oder `uncertain`);
-9. Append-Gate nur nach `committed` öffnen.
+5. aus `jobs[:1]` genau eine nächste fällige Aufgabe materialisieren;
+6. den Ein-Job-Block versiegeln und synchron atomar speichern;
+7. Adaptercommit für diesen Job ausführen;
+8. Ergebnis persistieren (`committed`, `failed` oder `uncertain`).
 
-### `enqueue_area`
-
-Unter demselben Lane-Lock:
-
-1. während `validating/sealed/committing` warten oder mit übersetztem `busy_committing` ablehnen;
-2. Area/Modus validieren;
-3. standardmäßig gegen identischen offenen Job deduplizieren;
-4. explizite Wiederholung nur mit Benutzerbestätigung;
-5. Job als eigenen `sealed` Ad-hoc-Block hinter alle existierenden Jobs der Lane anhängen und persistieren;
-6. niemals allein aufgrund eines Parameters von `enqueue_area` committen.
-
-Device-Queue-Append und -Commit bleiben ausdrücklich einer späteren Adapter-Command-API vorbehalten. Fehlschlägt dort ein natives Geräte-Append, bleibt der Plannerzustand nicht fälschlich `committed`: Ergebnis wird `failed`/`uncertain`, und die UI bietet eine sichere Aktion.
 
 ## Dispatch-Strategien
 
 ### `native_batch`
 
-Ein geordneter Multi-Area-Aufruf. Planner-atomar; keine Robot-Atomizität.
+Im ausgelieferten Live-Pfad der Beta der Dispatch-Strategiewert für den einzelnen von `start_next` materialisierten Job. Der Name begründet keinen öffentlichen Mehrraumvertrag und keine Robot-Atomizität.
 
 ### `planner_sequential`
 
-Ein Raum wird erst nach bestätigtem Abschluss des vorherigen gesendet. Logische Reihenfolge bleibt erhalten; externe App-/Automationsinterferenz kann nicht vollständig verhindert werden.
+Im Dry-run verwendeter Strategiewert. Da `start_next` nur einen Job materialisiert, behauptet die Beta damit keine selbsttätige Abarbeitung mehrerer Räume.
 
 ### `device_queue`
 
-Atomischer Commit mit Queue-/Run-ID und anschließendem Append. Dies ist die notwendige Strategie für starke Robot-Atomizität; die Start-API verlangt zusätzlich den expliziten Nachweis `atomic_device_commit=true`.
+Im Domainmodell reservierter Strategiewert. Der öffentliche Beta-Pfad wählt ihn nicht und dokumentiert daher keine daraus abgeleitete Gerätequeue-Funktion.
 
 ### Gesamtflächen-Fallback
 
@@ -187,4 +173,4 @@ Beim Setup:
 - `per_area_progress`: Jobs werden einzeln `completed` und grau.
 - nur globaler Abschluss: keine erfundenen Zwischenstände; alle Jobs erst nach Gesamtabschluss abschließen.
 - unklare Korrelation: `uncertain`, keine Zeitstempelaktualisierung.
-- Dashboard zeigt nur Jobs des Tagesblocks und danach angehängte Ad-hoc-Jobs; nie ungeplante Räume.
+- Dashboard zeigt ausschließlich tatsächlich materialisierte Queue-Jobs; nie ungeplante Räume.

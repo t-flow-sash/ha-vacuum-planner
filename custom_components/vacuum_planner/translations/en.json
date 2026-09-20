@@ -40,7 +40,113 @@
           "ready": "Ready",
           "running": "Running"
         }
+      },
+      "next_action": {
+        "name": "Next action"
+      },
+      "pending_count": {
+        "name": "Pending tasks"
+      },
+      "queue": {
+        "name": "Queue"
+      },
+      "current_phase": {
+        "name": "Current phase"
+      },
+      "capability_tier": {
+        "name": "Capability tier"
       }
+    },
+    "switch": {
+      "planning": {
+        "name": "Planning"
+      }
+    },
+    "binary_sensor": {
+      "ready": {
+        "name": "Ready"
+      },
+      "attention": {
+        "name": "Attention required"
+      }
+    },
+    "button": {
+      "start_next": {
+        "name": "Start next due task"
+      },
+      "cancel_current_block": {
+        "name": "Cancel current block"
+      }
+    }
+  },
+  "issues": {
+    "missing_registry": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Reload the entry. If its topology remains invalid, remove it and set it up again."
+        },
+        "step": {
+          "init": {
+            "description": "The stored vacuum registry entry is no longer available. Restore it and reload the entry, or remove the entry and set it up again.",
+            "title": "Vacuum registry entry is missing"
+          }
+        }
+      },
+      "title": "Vacuum registry entry is missing"
+    },
+    "missing_mapping": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Reload the entry. If its topology remains invalid, remove it and set it up again."
+        },
+        "step": {
+          "init": {
+            "description": "At least one configured area has no valid vacuum mapping. Restore the mapping and reload the entry, or remove the entry and set it up again.",
+            "title": "Area mapping is missing"
+          }
+        }
+      },
+      "title": "Area mapping is missing"
+    },
+    "lost_capability": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Reload the entry. If its topology remains invalid, remove it and set it up again."
+        },
+        "step": {
+          "init": {
+            "description": "The configured vacuum no longer supports native area cleaning. Restore support and reload the entry, or remove the entry and set it up again with a compatible vacuum.",
+            "title": "Native area capability was lost"
+          }
+        }
+      },
+      "title": "Native area capability was lost"
+    },
+    "removed_areas": {
+      "fix_flow": {
+        "abort": {
+          "reload_or_recreate_required": "Reload the entry. If its topology remains invalid, remove it and set it up again."
+        },
+        "step": {
+          "init": {
+            "description": "At least one configured area was removed. Restore the area and mapping and reload the entry, or remove the entry and set it up again.",
+            "title": "Configured vacuum areas were removed"
+          }
+        }
+      },
+      "title": "Configured vacuum areas were removed"
+    },
+    "unresolved_external_run": {
+      "title": "External vacuum run needs resolution",
+      "description": "A dispatched vacuum run has an uncertain outcome. Inspect the queue and explicitly resolve the uncertain job before retrying."
+    },
+    "corrupt_store": {
+      "title": "Planner store is corrupt",
+      "description": "The stored Vacuum Planner state is invalid and was not overwritten. Restore a valid backup or remove the corrupt store manually."
+    },
+    "future_store": {
+      "title": "Planner store is from a newer version",
+      "description": "The stored Vacuum Planner state uses a newer unsupported format. Upgrade the integration or restore a compatible backup."
     }
   },
   "options": {
@@ -50,31 +156,97 @@
           "dry_run": "Dry run (do not control the vacuum)",
           "planning_enabled": "Planning preference enabled"
         },
-        "description": "Configure planner behavior. Dry run is enabled by default and prevents control of the vacuum.",
+        "description": "Configure planner behavior. Dry run is enabled by default and prevents control of the vacuum. Warning: disabling dry run enables real vacuum commands; commands are still sent only after an explicit action.",
         "title": "Planner behavior"
       }
     }
   },
+
   "services": {
-    "get_queue": {
-      "description": "Returns the current persisted queue without changing planner state.",
-      "fields": {
-        "config_entry_id": {
-          "description": "Select the Vacuum Planner instance to read.",
-          "name": "Planner instance"
-        }
-      },
-      "name": "Get queue"
-    },
     "start_next": {
-      "description": "Seals the currently due work as an idempotent dry-run block without controlling the vacuum.",
+      "name": "Start next due work",
+      "description": "Starts the next currently due task through the canonical one-tap path.",
       "fields": {
         "config_entry_id": {
-          "description": "Select the Vacuum Planner instance to start.",
-          "name": "Planner instance"
+          "name": "Planner instance",
+          "description": "Select the explicitly addressed Vacuum Planner instance."
         }
-      },
-      "name": "Start next due work"
+      }
+    },
+
+    "skip_area_today": {
+      "name": "Skip area today",
+      "description": "Skips today’s current due occurrence for one configured area.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planner instance",
+          "description": "Select the explicitly addressed Vacuum Planner instance."
+        },
+        "area_id": {
+          "name": "Area",
+          "description": "Select a configured Home Assistant area."
+        }
+      }
+    },
+    "postpone_area": {
+      "name": "Postpone area",
+      "description": "Postpones one configured area by an explicit number of days.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planner instance",
+          "description": "Select the explicitly addressed Vacuum Planner instance."
+        },
+        "area_id": {
+          "name": "Area",
+          "description": "Select a configured Home Assistant area."
+        },
+        "days": {
+          "name": "Days",
+          "description": "Positive number of days to postpone the area."
+        }
+      }
+    },
+    "cancel_block": {
+      "name": "Cancel block",
+      "description": "Cancels only a safely local block that has not been dispatched.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planner instance",
+          "description": "Select the explicitly addressed Vacuum Planner instance."
+        },
+        "block_id": {
+          "name": "Block ID",
+          "description": "Planner block identifier returned by the queue action."
+        }
+      }
+    },
+    "resolve_uncertain_run": {
+      "name": "Resolve uncertain run",
+      "description": "Resolves an uncertain job only with an explicit retry-safe decision.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planner instance",
+          "description": "Select the explicitly addressed Vacuum Planner instance."
+        },
+        "job_id": {
+          "name": "Job ID",
+          "description": "Uncertain planner job identifier returned by the queue action."
+        },
+        "resolution": {
+          "name": "Resolution",
+          "description": "Explicitly confirm that retrying is safe."
+        }
+      }
+    },
+    "get_queue": {
+      "name": "Get queue",
+      "description": "Returns the persisted queue without vendor target data.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Planner instance",
+          "description": "Select the explicitly addressed Vacuum Planner instance."
+        }
+      }
     }
   }
 }

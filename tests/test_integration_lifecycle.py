@@ -37,6 +37,7 @@ from custom_components.vacuum_planner.domain.serialization import (
     deserialize_planner_state,
     serialize_planner_state,
 )
+from custom_components.vacuum_planner.integration_observer import async_apply_observation
 
 
 def test_integration_constants_define_entry_identity() -> None:
@@ -54,9 +55,7 @@ def test_setup_and_unload_manage_entry_runtime_data_without_platforms() -> None:
     )
 
     assert asyncio.run(async_setup_entry(hass, entry)) is True
-    assert entry.runtime_data == VacuumPlannerRuntimeData(
-        vacuum_entity_id="vacuum.downstairs"
-    )
+    assert entry.runtime_data == VacuumPlannerRuntimeData(vacuum_entity_id="vacuum.downstairs")
     assert entry.runtime_data.planning_enabled is True
     assert entry.runtime_data.dry_run is True
 
@@ -74,9 +73,7 @@ def test_setup_forwards_sensor_platform_and_unload_removes_it() -> None:
         ) -> None:
             forwarded.append((entry, platforms))
 
-        async def async_unload_platforms(
-            self, entry: object, platforms: tuple[str, ...]
-        ) -> bool:
+        async def async_unload_platforms(self, entry: object, platforms: tuple[str, ...]) -> bool:
             unloaded.append((entry, platforms))
             return True
 
@@ -89,17 +86,15 @@ def test_setup_forwards_sensor_platform_and_unload_removes_it() -> None:
     )
 
     assert asyncio.run(async_setup_entry(hass, entry)) is True
-    assert forwarded == [(entry, ("sensor",))]
+    assert forwarded == [(entry, ("sensor", "switch", "binary_sensor", "button"))]
     assert asyncio.run(async_unload_entry(hass, entry)) is True
-    assert unloaded == [(entry, ("sensor",))]
+    assert unloaded == [(entry, ("sensor", "switch", "binary_sensor", "button"))]
     assert entry.runtime_data is None
 
 
 def test_failed_platform_unload_preserves_runtime_data() -> None:
     class ConfigEntries:
-        async def async_unload_platforms(
-            self, _entry: object, _platforms: tuple[str, ...]
-        ) -> bool:
+        async def async_unload_platforms(self, _entry: object, _platforms: tuple[str, ...]) -> bool:
             return False
 
     runtime_data = VacuumPlannerRuntimeData(vacuum_entity_id="vacuum.downstairs")
@@ -217,7 +212,7 @@ def test_get_queue_action_rejects_an_unloaded_config_entry(
         asyncio.run(handler(SimpleNamespace(data={"config_entry_id": "missing"})))
 
 
-def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(
+def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(  # noqa: PLR0915 - hermetic HA module setup
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registered: dict[
@@ -266,11 +261,15 @@ def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(
     area_registry_module = ModuleType("homeassistant.helpers.area_registry")
     core_module = ModuleType("homeassistant.core")
     exceptions_module = ModuleType("homeassistant.exceptions")
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    const_module = ModuleType("homeassistant.const")
     vars(storage_module)["Store"] = EmptyHAStore
     vars(entity_registry_module)["async_get"] = lambda _hass: entity_registry
     vars(area_registry_module)["async_get"] = lambda _hass: area_registry
     vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
     vars(exceptions_module)["ServiceValidationError"] = ValueError
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    vars(const_module)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     vars(homeassistant_module)["helpers"] = helpers_module
     vars(helpers_module)["storage"] = storage_module
     vars(helpers_module)["entity_registry"] = entity_registry_module
@@ -284,12 +283,16 @@ def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(
     monkeypatch.setitem(sys.modules, "homeassistant.helpers.area_registry", area_registry_module)
     monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.const", const_module)
 
     hass = SimpleNamespace(
         data={},
         services=Services(),
         states=SimpleNamespace(
-            get=lambda _entity_id: SimpleNamespace(attributes={"supported_features": 1024})
+            get=lambda _entity_id: SimpleNamespace(
+                state="idle", attributes={"supported_features": 1024}
+            )
         ),
     )
     entry = SimpleNamespace(
@@ -318,6 +321,14 @@ def test_start_next_action_seals_due_work_idempotently_without_hardware_calls(
     assert len(entry.runtime_data.state.ledger.blocks) == 1
     assert len(entry.runtime_data.state.ledger.jobs) == 1
     assert len(saved) == 2  # initial state and one successful command
+    assert hardware_calls == []
+
+    entry.runtime_data.dry_run = False
+    with pytest.raises(ValueError, match=r"Dry-run block cancelled.*retry"):
+        asyncio.run(handler(SimpleNamespace(data={"config_entry_id": entry.entry_id})))
+
+    assert entry.runtime_data.state.ledger.blocks[0].state is BlockState.CANCELLED
+    assert entry.runtime_data.state.ledger.jobs[0].state is JobState.CANCELLED
     assert hardware_calls == []
 
 
@@ -371,6 +382,9 @@ def test_start_next_live_dispatch_persists_before_native_service_call(  # noqa: 
     registry_entry = SimpleNamespace(
         id="vacuum-registry-entry",
         entity_id="vacuum.downstairs",
+        domain="vacuum",
+        disabled=False,
+        disabled_by=None,
         options={
             "vacuum": {
                 "area_mapping": {
@@ -392,12 +406,14 @@ def test_start_next_live_dispatch_persists_before_native_service_call(  # noqa: 
     core_module = ModuleType("homeassistant.core")
     exceptions_module = ModuleType("homeassistant.exceptions")
     vacuum_module = ModuleType("homeassistant.components.vacuum")
+    const_module = ModuleType("homeassistant.const")
     vars(storage_module)["Store"] = EmptyHAStore
     vars(entity_registry_module)["async_get"] = lambda _hass: entity_registry
     vars(area_registry_module)["async_get"] = lambda _hass: area_registry
     vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
     vars(exceptions_module)["ServiceValidationError"] = ValueError
     vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    vars(const_module)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     vars(homeassistant_module)["helpers"] = helpers_module
     vars(helpers_module)["storage"] = storage_module
     vars(helpers_module)["entity_registry"] = entity_registry_module
@@ -412,6 +428,7 @@ def test_start_next_live_dispatch_persists_before_native_service_call(  # noqa: 
     monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
     monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.const", const_module)
 
     hass = SimpleNamespace(
         data={},
@@ -463,12 +480,13 @@ def test_start_next_live_dispatch_persists_before_native_service_call(  # noqa: 
     assert events[2][1] == (
         "vacuum",
         "clean_area",
-        {"cleaning_area_id": ["hallway", "kitchen"]},
+        {"cleaning_area_id": ["hallway"]},
         {"entity_id": "vacuum.downstairs"},
         True,
         service_call_context,
     )
     assert response["status"] == "created"
+    assert response["area_ids"] == ["hallway"]
     assert response["dry_run"] is False
 
 
@@ -481,32 +499,19 @@ def test_start_next_reuses_persisted_sealed_native_batch_after_restart(  # noqa:
     current_date = current_at.date().isoformat()
     assert persisted_date != current_date
     monkeypatch.setattr(integration, "_utcnow", lambda: current_at)
-    plan = PlanRevision(
-        "revision-1",
-        started_at,
-        (
-            RoomPlan(
-                area_id="kitchen",
-                lane_id="vacuum-registry-entry",
-                enabled=True,
-                vacuum_interval_days=1,
-                vacuum_and_mop_interval_days=None,
-                preferred_mode=PreferredMode.VACUUM,
-                priority=0,
-            ),
-        ),
-    )
+    sealed_revision_id = "revision-1"
+    plan = PlanRevision("revision-2", current_at, ())
     ids = iter(("block-1", "job-1"))
     sealed = start_due_block(
         QueueLedger.empty(),
         PlanSnapshot(
-            plan.revision_id,
+            sealed_revision_id,
             "vacuum-registry-entry",
             started_at,
             (SnapshotJob("kitchen", "Kitchen", ("segment-7",), Mode.VACUUM, 0, started_at),),
         ),
         "vacuum-registry-entry",
-        f"start_next:{plan.revision_id}:{persisted_date}",
+        f"start_next:{sealed_revision_id}:{persisted_date}",
         started_at,
         lambda: next(ids),
         DispatchStrategy.NATIVE_BATCH,
@@ -543,7 +548,11 @@ def test_start_next_reuses_persisted_sealed_native_batch_after_restart(  # noqa:
             events.append(("call", None))
 
     registry_entry = SimpleNamespace(
+        id="vacuum-registry-entry",
         entity_id="vacuum.downstairs",
+        domain="vacuum",
+        disabled=False,
+        disabled_by=None,
         options={"vacuum": {"area_mapping": {"kitchen": ["segment-7"]}}},
     )
     entity_registry = SimpleNamespace(async_get=lambda _value: registry_entry)
@@ -558,12 +567,14 @@ def test_start_next_reuses_persisted_sealed_native_batch_after_restart(  # noqa:
     core_module = ModuleType("homeassistant.core")
     exceptions_module = ModuleType("homeassistant.exceptions")
     vacuum_module = ModuleType("homeassistant.components.vacuum")
+    const_module = ModuleType("homeassistant.const")
     vars(storage_module)["Store"] = FakeHAStore
     vars(entity_registry_module)["async_get"] = lambda _hass: entity_registry
     vars(area_registry_module)["async_get"] = lambda _hass: area_registry
     vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
     vars(exceptions_module)["ServiceValidationError"] = ValueError
     vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    vars(const_module)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     vars(homeassistant_module)["helpers"] = helpers_module
     vars(helpers_module)["storage"] = storage_module
     vars(helpers_module)["entity_registry"] = entity_registry_module
@@ -578,6 +589,7 @@ def test_start_next_reuses_persisted_sealed_native_batch_after_restart(  # noqa:
     monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
     monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
     monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.const", const_module)
     hass = SimpleNamespace(
         data={},
         services=Services(),
@@ -600,6 +612,7 @@ def test_start_next_reuses_persisted_sealed_native_batch_after_restart(  # noqa:
 
     assert asyncio.run(integration.async_setup(hass, {})) is True
     assert asyncio.run(async_setup_entry(hass, entry)) is True
+    assert entry.runtime_data.topology_ready is True
     response = asyncio.run(
         registered["vacuum_planner.start_next"](
             SimpleNamespace(data={"config_entry_id": entry.entry_id}, context=object())
@@ -670,7 +683,11 @@ def test_parallel_start_next_claims_native_batch_once(
             await release_service.wait()
 
     registry_entry = SimpleNamespace(
+        id="vacuum-registry-entry",
         entity_id="vacuum.downstairs",
+        domain="vacuum",
+        disabled=False,
+        disabled_by=None,
         options={"vacuum": {"area_mapping": {"kitchen": ["segment-7"]}}},
     )
     entity_registry = SimpleNamespace(async_get=lambda _value: registry_entry)
@@ -696,6 +713,7 @@ def test_parallel_start_next_claims_native_batch_once(
         vacuum_entity_id="vacuum.downstairs",
         dry_run=False,
         coordinator=coordinator,
+        vacuum_registry_id="vacuum-registry-entry",
     )
     hass = SimpleNamespace(
         data={DOMAIN: {"planner-entry-1": runtime}},
@@ -711,15 +729,11 @@ def test_parallel_start_next_claims_native_batch_once(
 
     async def exercise_parallel_start() -> tuple[dict[str, object], dict[str, object]]:
         first_task = asyncio.create_task(
-            handler(
-                SimpleNamespace(data={"config_entry_id": "planner-entry-1"}, context=object())
-            )
+            handler(SimpleNamespace(data={"config_entry_id": "planner-entry-1"}, context=object()))
         )
         await first_save_started.wait()
         second_task = asyncio.create_task(
-            handler(
-                SimpleNamespace(data={"config_entry_id": "planner-entry-1"}, context=object())
-            )
+            handler(SimpleNamespace(data={"config_entry_id": "planner-entry-1"}, context=object()))
         )
         await asyncio.sleep(0)
         release_first_save.set()
@@ -741,9 +755,218 @@ def test_parallel_start_next_claims_native_batch_once(
     ]
 
 
+def test_pause_queued_before_start_wins_under_shared_command_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: dict[
+        str,
+        Callable[[object], Coroutine[object, object, dict[str, object]]],
+    ] = {}
+
+    class Services:
+        def async_register(
+            self,
+            domain: str,
+            service: str,
+            handler: Callable[[object], Coroutine[object, object, dict[str, object]]],
+            **_kwargs: object,
+        ) -> None:
+            registered[f"{domain}.{service}"] = handler
+
+    class Store:
+        async def async_save(self, _state: PlannerState) -> None:
+            pass
+
+    class StubServiceValidationError(Exception):
+        pass
+
+    core_module = ModuleType("homeassistant.core")
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vars(core_module)["SupportsResponse"] = SimpleNamespace(ONLY="only")
+    vars(exceptions_module)["ServiceValidationError"] = StubServiceValidationError
+    monkeypatch.setitem(sys.modules, "homeassistant.core", core_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+
+    coordinator = PlannerCoordinator(
+        PlannerState(PlanRevision("revision-1", datetime.now(UTC), ()), QueueLedger.empty()),
+        Store(),
+    )
+    runtime = VacuumPlannerRuntimeData("vacuum.downstairs", coordinator=coordinator)
+    hass = SimpleNamespace(
+        data={DOMAIN: {"planner-entry-1": runtime}},
+        services=Services(),
+    )
+    integration._register_start_next_action(hass)  # noqa: SLF001
+    handler = registered["vacuum_planner.start_next"]
+
+    async def exercise() -> None:
+        await coordinator._command_lock.acquire()  # noqa: SLF001 - deterministic queue ordering
+        pause = asyncio.create_task(runtime.async_set_planning_enabled(enabled=False))
+        await asyncio.sleep(0)
+        start = asyncio.create_task(
+            handler(SimpleNamespace(data={"config_entry_id": "planner-entry-1"}, context=object()))
+        )
+        await asyncio.sleep(0)
+        coordinator._command_lock.release()  # noqa: SLF001
+        await pause
+        with pytest.raises(StubServiceValidationError, match="paused"):
+            await start
+
+    asyncio.run(exercise())
+    assert runtime.planning_enabled is False
+
+
+def test_live_dispatch_preflight_failure_keeps_sealed_block_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+    saved: list[PlannerState] = []
+    service_calls = 0
+
+    class Store:
+        async def async_save(self, state: PlannerState) -> None:
+            saved.append(state)
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            nonlocal service_calls
+            service_calls += 1
+
+    class StubServiceValidationError(Exception):
+        pass
+
+    exceptions_module = ModuleType("homeassistant.exceptions")
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(exceptions_module)["ServiceValidationError"] = StubServiceValidationError
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.exceptions", exceptions_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs", dry_run=False, coordinator=coordinator
+    )
+
+    with pytest.raises(StubServiceValidationError, match="preflight"):
+        asyncio.run(
+            integration._async_dispatch_created_block(  # noqa: SLF001
+                SimpleNamespace(
+                    services=Services(),
+                    states=SimpleNamespace(
+                        get=lambda _entity_id: SimpleNamespace(
+                            state="idle", attributes={"supported_features": -1}
+                        )
+                    ),
+                ),
+                runtime,
+                result,
+                object(),
+                clock=lambda: at,
+            )
+        )
+
+    assert service_calls == 0
+    assert saved == []
+    assert coordinator.state.ledger.blocks[0].state is BlockState.SEALED
+    assert coordinator.state.ledger.jobs[0].state is JobState.PENDING
+
+
+@pytest.mark.parametrize(
+    "observations",
+    [
+        (("cleaning", {}),),
+        (("error", {}),),
+        (("unavailable", {}),),
+        (("cleaning", {}), ("idle", {})),
+    ],
+)
+def test_live_dispatch_does_not_overwrite_advanced_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    observations: tuple[tuple[str, dict[str, object]], ...],
+) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
+    at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+    ids = iter(("block-1", "job-1"))
+    result = start_due_block(
+        QueueLedger.empty(),
+        PlanSnapshot(
+            "revision-1",
+            "lane-1",
+            at,
+            (SnapshotJob("kitchen", "Kitchen", (), Mode.VACUUM, 1, at),),
+        ),
+        "lane-1",
+        "start-next-1",
+        at,
+        lambda: next(ids),
+        DispatchStrategy.NATIVE_BATCH,
+        BlockGuarantee.PLANNER_ATOMIC,
+    )
+    initial = PlannerState(PlanRevision("revision-1", at, ()), result.ledger)
+
+    class Store:
+        async def async_save(self, _state: PlannerState) -> None:
+            pass
+
+    coordinator = PlannerCoordinator(initial, Store())
+    runtime = VacuumPlannerRuntimeData(
+        vacuum_entity_id="vacuum.downstairs",
+        dry_run=False,
+        coordinator=coordinator,
+    )
+
+    class Services:
+        async def async_call(self, *_args: object, **_kwargs: object) -> None:
+            for vacuum_state, attributes in observations:
+                await async_apply_observation(runtime, vacuum_state, attributes, at)
+
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=1024)
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    hass = SimpleNamespace(
+        services=Services(),
+        states=SimpleNamespace(
+            get=lambda _entity_id: SimpleNamespace(
+                state="idle", attributes={"supported_features": 1024}
+            )
+        ),
+    )
+
+    persisted = asyncio.run(
+        integration._async_dispatch_created_block(  # noqa: SLF001
+            hass,
+            runtime,
+            result,
+            object(),
+            clock=lambda: at,
+        )
+    )
+
+    assert persisted is coordinator.state
+    assert persisted.ledger.blocks[0].state is not BlockState.COMMITTED
+
+
 def test_live_dispatch_exception_after_side_effect_is_quarantined_as_uncertain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
     at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
     ids = iter(("block-1", "job-1"))
     result = start_due_block(
@@ -818,6 +1041,7 @@ def test_live_dispatch_exception_after_side_effect_is_quarantined_as_uncertain(
 def test_live_dispatch_cancellation_is_quarantined_before_reraising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
     at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
     ids = iter(("block-1", "job-1"))
     result = start_due_block(
@@ -884,6 +1108,7 @@ def test_live_dispatch_cancellation_is_quarantined_before_reraising(
 def test_live_dispatch_double_cancellation_waits_for_blocked_quarantine_save(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
     at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
     ids = iter(("block-1", "job-1"))
     result = start_due_block(
@@ -972,6 +1197,7 @@ def test_live_dispatch_double_cancellation_waits_for_blocked_quarantine_save(
 def test_live_dispatch_cancellation_during_acceptance_is_quarantined(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
     at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
     ids = iter(("block-1", "job-1"))
     result = start_due_block(
@@ -1043,6 +1269,7 @@ def test_live_dispatch_cancellation_during_acceptance_is_quarantined(
 def test_live_dispatch_acceptance_save_failure_is_quarantined_and_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(integration, "_resolve_command_vacuum", lambda *_args: "vacuum.downstairs")
     at = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
     ids = iter(("block-1", "job-1"))
     result = start_due_block(
@@ -1146,10 +1373,18 @@ def test_setup_resolves_current_entity_id_from_stable_registry_identity(
     homeassistant_module = ModuleType("homeassistant")
     helpers_module = ModuleType("homeassistant.helpers")
     entity_registry_module = ModuleType("homeassistant.helpers.entity_registry")
+    vacuum_module = ModuleType("homeassistant.components.vacuum")
+    const_module = ModuleType("homeassistant.const")
     registry = SimpleNamespace(
-        async_get=lambda _registry_id: SimpleNamespace(entity_id="vacuum.renamed")
+        async_get=lambda _registry_id: SimpleNamespace(
+            id="vacuum-registry-entry",
+            entity_id="vacuum.renamed",
+            options={"vacuum": {"area_mapping": {"kitchen": ["segment-7"]}}},
+        )
     )
     vars(entity_registry_module)["async_get"] = lambda _hass: registry
+    vars(vacuum_module)["VacuumEntityFeature"] = SimpleNamespace(CLEAN_AREA=16384)
+    vars(const_module)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     vars(homeassistant_module)["helpers"] = helpers_module
     vars(helpers_module)["entity_registry"] = entity_registry_module
     monkeypatch.setitem(sys.modules, "homeassistant", homeassistant_module)
@@ -1157,15 +1392,25 @@ def test_setup_resolves_current_entity_id_from_stable_registry_identity(
     monkeypatch.setitem(
         sys.modules, "homeassistant.helpers.entity_registry", entity_registry_module
     )
+    monkeypatch.setitem(sys.modules, "homeassistant.components.vacuum", vacuum_module)
+    monkeypatch.setitem(sys.modules, "homeassistant.const", const_module)
 
-    updated: list[dict[str, str]] = []
+    updated: list[dict[str, object]] = []
     hass = SimpleNamespace(
+        states=SimpleNamespace(
+            get=lambda _entity_id: SimpleNamespace(
+                state="idle", attributes={"supported_features": 16384}
+            )
+        ),
         config_entries=SimpleNamespace(
             async_update_entry=lambda _entry, *, data: updated.append(data)
-        )
+        ),
     )
     entry = SimpleNamespace(
-        data={CONF_VACUUM_ENTITY_ID: "vacuum.old_name"},
+        data={
+            CONF_VACUUM_ENTITY_ID: "vacuum.old_name",
+            CONF_AREA_IDS: ["kitchen"],
+        },
         options={},
         unique_id="vacuum-registry-entry",
         runtime_data=None,
@@ -1173,9 +1418,16 @@ def test_setup_resolves_current_entity_id_from_stable_registry_identity(
 
     assert asyncio.run(async_setup_entry(hass, entry)) is True
     assert entry.runtime_data == VacuumPlannerRuntimeData(
-        vacuum_entity_id="vacuum.renamed"
+        vacuum_entity_id="vacuum.renamed",
+        vacuum_registry_id="vacuum-registry-entry",
+        configured_area_ids=("kitchen",),
     )
-    assert updated == [{CONF_VACUUM_ENTITY_ID: "vacuum.renamed"}]
+    assert updated == [
+        {
+            CONF_VACUUM_ENTITY_ID: "vacuum.renamed",
+            CONF_AREA_IDS: ["kitchen"],
+        }
+    ]
 
 
 def test_setup_loads_entry_specific_planner_state_from_atomic_ha_store(
@@ -1287,7 +1539,7 @@ def test_setup_initializes_and_persists_room_plans_for_configured_ha_areas(
         plan.lane_id == "planner-entry-1"
         and plan.enabled
         and plan.vacuum_interval_days == 7
-        and plan.vacuum_and_mop_interval_days is None
+        and plan.vacuum_and_mop_interval_days == 7
         and plan.preferred_mode is PreferredMode.VACUUM
         for plan in initial.plan_revision.room_plans
     )

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .domain.models import PlannerState
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class PlannerStateStore(Protocol):
@@ -41,17 +44,51 @@ class PlannerCoordinator:
 
         return remove_listener
 
+    async def async_update_projection(
+        self,
+        update: Callable[[], None],
+        *,
+        guard: Callable[[], None] | None = None,
+    ) -> None:
+        """Serialize and publish a non-ledger runtime preference update."""
+        async with self._command_lock:
+            if guard is not None:
+                guard()
+            update()
+            if guard is not None:
+                guard()
+            self._publish()
+
+    def _publish(self) -> None:
+        """Notify listeners while isolating a faulty entity callback."""
+        for listener in tuple(self._listeners):
+            try:
+                listener()
+            except Exception:
+                _LOGGER.exception("Vacuum Planner state listener failed")
+
+    def publish_runtime_projection(self) -> None:
+        """Publish a runtime-only readiness change without persistence I/O."""
+        self._publish()
+
     async def async_command(
         self,
         command: Callable[[PlannerState], PlannerState],
+        *,
+        guard: Callable[[], None] | None = None,
     ) -> PlannerState:
         """Apply and atomically persist one command under the shared lock."""
         async with self._command_lock:
+            if guard is not None:
+                guard()
             updated = command(self._state)
             if updated == self._state:
                 return self._state
+            if guard is not None:
+                guard()
             await self._store.async_save(updated)
+            if guard is not None:
+                guard()
             self._state = updated
-            for listener in tuple(self._listeners):
-                listener()
+            self._publish()
             return updated

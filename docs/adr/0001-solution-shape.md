@@ -6,7 +6,7 @@
 
 ## Kontext
 
-Der Planner soll ohne YAML oder Programmierung eingerichtet werden, native HA-Areas verwenden, einen gestarteten Tagesplan als geschlossenen Block behandeln, danach Ad-hoc-Aufgaben anhängen und einen stabilen, herstellerneutralen Entity-/Dashboard-Vertrag bereitstellen. Hersteller unterscheiden sich deutlich bei Raumreinigung, Moduswahl, Gerätequeue, Telemetrie und Run-Korrelation.
+Der Planner soll ohne YAML oder Programmierung eingerichtet werden, native HA-Areas verwenden, pro One-Tap genau die nächste fällige Aufgabe als Ein-Job-Block behandeln und einen stabilen, herstellerneutralen Entity-/Dashboard-Vertrag bereitstellen. Die Beta erzeugt Queue-Aufgaben ausschließlich aus fälligen Area-Plänen. Hersteller unterscheiden sich deutlich bei Raumreinigung, Moduswahl, Gerätequeue, Telemetrie und Run-Korrelation.
 
 Zu entscheiden ist zwischen:
 
@@ -17,7 +17,7 @@ Zu entscheiden ist zwischen:
 
 ## Entscheidungstreiber
 
-- UI-only Config/Reconfigure/Options;
+- UI-only Config und sichere Verhaltens-Options;
 - persistentes, versioniertes Domain- und Queue-Modell;
 - zentraler Lock, Idempotenz und Recovery nach HA-Neustart;
 - eigene stabile Entities, Actions, Repairs und Diagnostics;
@@ -35,7 +35,7 @@ Zu entscheiden ist zwischen:
 | eigener Entity-Vertrag | nein | nein | **ja** | **ja** |
 | globales Lock/Recovery | schwach | schwach | **stark** | **stark** |
 | Capability-/Adaptermodell | unwartbar | begrenzt | **sauber** | **sauber** |
-| Dashboard-Strategy/Repairs | nein | nein | **ja** | **ja** |
+| Dashboard-Artefakt/Repairs | nein | nein | **ja** | **ja** |
 | einfache Verteilung | **stark** | **stark** | mittel | mittel |
 | Trigger-/Automationskomposition | **stark** | stark | mittel | **stark** |
 
@@ -49,7 +49,7 @@ Geeignet als optionale Aktionshülle. Auch `mode: queued` garantiert weder Robot
 
 ### Reine Custom Integration
 
-Erfüllt die Kernanforderungen, lässt jedoch die gute Wiederverwendbarkeit von HA-Triggern und eine optionale Frontend-Strategy ungenutzt.
+Erfüllt die Kernanforderungen, lässt jedoch die gute Wiederverwendbarkeit von HA-Triggern ungenutzt.
 
 ## Entscheidung
 
@@ -57,26 +57,26 @@ Wir wählen eine **Hybridarchitektur mit einer schlanken Custom Integration als 
 
 Der Kern verantwortet:
 
-- Config Flow, Reconfigure und Options;
+- initialer Config Flow und sichere Verhaltens-Options;
 - Plan-, Snapshot-, Queue- und Run-Domainmodell;
 - versionierte Persistenz, Locking, Idempotenz und Recovery;
 - Capability-Probe und Adapterauswahl;
 - HA-Area-Validierung und Mapping-Gates;
 - universelle Entities und Actions;
-- Repairs, Diagnostics und normalisierte Events.
+- Repairs und Diagnostics.
 
 Optionale Schichten:
 
 - Automation Blueprints ausschließlich als Zeit-/Präsenz-/Energie-Trigger;
 - Script Blueprint höchstens als Komfortwrapper um öffentliche Actions;
-- Custom Dashboard Strategy für ein einmal bestätigtes, danach dynamisches Hauptdashboard;
+- importierbares Dashboard aus Home-Assistant-Standardkarten;
 - Vendor-Adapter nur dort, wo öffentliche HA-Abstraktionen fehlen.
 
 Kritische Zustandslogik und Queue-Semantik dürfen **nie** in Blueprint und Integration doppelt existieren.
 
 ## Native HA-Basis
 
-Der bevorzugte generische Pfad nutzt `VacuumEntityFeature.CLEAN_AREA`, das native Segment-zu-Area-Mapping und `vacuum.clean_area` mit geordneter Area-Liste. HA-Area-IDs sind die öffentliche Raumidentität. Rohe Segment-IDs bleiben Adapterdetails.
+Der bevorzugte generische Pfad nutzt `VacuumEntityFeature.CLEAN_AREA`, das native Segment-zu-Area-Mapping und `vacuum.clean_area` für die vom einzelnen Job adressierte HA-Area. HA-Area-IDs sind die öffentliche Raumidentität. Rohe Segment-IDs bleiben Adapterdetails.
 
 Ein einzelner `vacuum.clean_area`-Aufruf beweist jedoch weder eine transaktionale Gerätequeue noch raumgenauen Fortschritt. Deshalb führt der Planner ein eigenes persistentes Ledger.
 
@@ -84,8 +84,8 @@ Ein einzelner `vacuum.clean_area`-Aufruf beweist jedoch weder eine transaktional
 
 Wir unterscheiden:
 
-1. **Planner-Atomizität:** Tagesjobs werden vollständig validiert, als unveränderlicher Block in einem kritischen Abschnitt persistiert und spätere Jobs dahinter angehängt. Diese Garantie liefert der Kern.
-2. **Robot-Atomizität:** Der komplette Block ist als unteilbarer Auftrag in der Gerätequeue bestätigt und spätere Jobs können dort angehängt werden. Diese Garantie wird nur bei expliziter Adapter-Capability angezeigt.
+1. **Planner-Atomizität:** Genau der von `start_next` ausgewählte Job wird als unveränderlicher Ein-Job-Block in einem kritischen Abschnitt vor dem Dispatch persistiert. Diese Garantie liefert der Kern.
+2. **Robot-Atomizität:** Eine stärkere Garantie für Gerätequeues wird nur bei expliziter Adapter-Capability angezeigt; der ausgelieferte öffentliche Beta-Pfad sagt sie nicht zu.
 
 Bei Geräten ohne native Queue emuliert der Planner die Reihenfolge. Die UI darf dies nicht als „atomar in Gerätequeue übertragen“ bezeichnen.
 
