@@ -1131,7 +1131,10 @@ def _subscribe_observer(  # noqa: C901, PLR0915 - owns coordinated HA subscripti
             return
         supported_features = attributes.get("supported_features")
         if "supported_features" in attributes and (
-            type(supported_features) is not int or not supported_features & 16384
+            isinstance(supported_features, bool)
+            or not isinstance(supported_features, int)
+            or supported_features < 0
+            or not supported_features & 16384
         ):
             fail_closed(LOST_CAPABILITY)
             return

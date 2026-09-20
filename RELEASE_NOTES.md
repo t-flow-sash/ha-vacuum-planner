@@ -1,10 +1,10 @@
-# Release Notes – v0.1.0-beta.1
+# Release Notes – v0.1.0-beta.2
 
-**Status: unveröffentlichter privater Release-Kandidat.** `v0.1.0-beta.1` benennt das vorbereitete Artefakt; für diesen Stand wurden **kein Tag, kein GitHub-Release, kein Commit und kein Push** erstellt. Es handelt sich nicht um eine Produktions- oder Live-Pilot-Freigabe.
+**Status: unveröffentlichter privater Release-Kandidat.** `v0.1.0-beta.2` benennt das vorbereitete Artefakt; es wurden **kein Tag und kein GitHub-Release** erstellt. Der Config Flow wurde auf Home Assistant 2026.9.3 beaufsichtigt bis zur Raumplanung pilotiert; dies ist keine Produktions-, Hardware- oder Freigabe für unbeaufsichtigten Betrieb.
 
 ## Installation
 
-Der primäre Beta-Weg ist die autorisierte Copy-Installation aus `vacuum_planner-v0.1.0-beta.1.zip`, authentifiziert aus dem privaten semantischen GitHub-Release bezogen und gegen `SHA256SUMS` geprüft. Solange der Eigentümer diesen privaten Release nicht tatsächlich erstellt hat, können berechtigte Tester das identische Artefakt reproduzierbar mit `scripts/build_release.py` bauen.
+Der primäre Beta-Weg ist die autorisierte Copy-Installation aus `vacuum_planner-v0.1.0-beta.2.zip`, authentifiziert aus dem privaten semantischen GitHub-Release bezogen und gegen `SHA256SUMS` geprüft. Solange der Eigentümer diesen privaten Release nicht tatsächlich erstellt hat, können berechtigte Tester das identische Artefakt reproduzierbar mit `scripts/build_release.py` bauen.
 
 Das Repository ist privat und deshalb nicht über HACS installierbar. HACS ist nur eine spätere Option, falls das Repository öffentlich erreichbar wird und Distribution sowie Lizenz ausdrücklich freigegeben sind. Details: [Installation](docs/installation.md).
 
@@ -20,6 +20,9 @@ Das Repository ist privat und deshalb nicht über HACS installierbar. HACS ist n
 - dynamische Queue-Zustände, Completed klar grau/dezent mit Haken und Text, Touch-Ziele mindestens 48 px;
 - deterministisches Release-ZIP und SHA-256-Prüfsumme;
 - dokumentierter Backup-, Downgrade- und Entfernungsweg.
+- Config Flow validiert native Home-Assistant-`VacuumEntityFeature`-Bitmasken korrekt und weiterhin fail-closed.
+- Das Raumplan-Formular ist mit dem HA-2026.9-Probatio-Serializer kompatibel, zeigt freundliche Bereichsnamen samt Fortschritt und besitzt vollständige deutsche und englische Feldtexte.
+- Config Flow, Dispatch-Preflight und Laufzeit-Observer behandeln native `IntFlag`-Masken einheitlich und verwerfen Bool-, negative und malformed Werte fail-closed.
 
 ## Dashboard
 
@@ -29,8 +32,8 @@ Completed-Einträge bleiben sichtbar und sind durch graue Darstellung, Haken und
 
 ## Wichtige Grenzen
 
-- keine Tests an produktivem Home Assistant oder realer Saugerhardware;
-- Live-Pilot ausdrücklich nicht freigegeben;
+- beaufsichtigter Config-Flow-Pilot auf Home Assistant 2026.9.3 erfolgreich; keine Reinigungsbefehle durch diesen Prüfschritt;
+- reale Saugerhardware, Live-Dispatch und unbeaufsichtigter Betrieb weiterhin nicht freigegeben;
 - kein vollständiger Planeditor;
 - Planner-Commit und Geräteausführung sind getrennte Garantien;
 - Downgrade nur mit bestätigter Store-Kompatibilität oder vollständiger Backup-Wiederherstellung;

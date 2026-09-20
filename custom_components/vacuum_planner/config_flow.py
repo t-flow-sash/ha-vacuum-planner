@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any, cast
 
 import voluptuous as vol
@@ -142,6 +143,9 @@ class VacuumPlannerConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-a
 
     def _area_plan_form(self) -> ConfigFlowResult:
         area_id = self._selected_area_ids[self._area_plan_index]
+        area_registry = import_module("homeassistant.helpers.area_registry").async_get(self.hass)
+        area_entry = area_registry.async_get_area(area_id)
+        area_name = getattr(area_entry, "name", area_id)
         defaults = self._default_area_plan()
         modes = [PreferredMode.VACUUM.value]
         if find_dreame_mova_cleaning_mode_entity(self.hass, self._vacuum_registry_id) is not None:
@@ -162,18 +166,22 @@ class VacuumPlannerConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-a
                     vol.Required(
                         CONF_VACUUM_INTERVAL_DAYS,
                         default=defaults[CONF_VACUUM_INTERVAL_DAYS],
-                    ): vol.All(_strict_int, vol.Range(min=1, max=365)),
+                    ): vol.All(int, vol.Range(min=1, max=365)),
                     vol.Required(
                         CONF_MOP_INTERVAL_DAYS,
                         default=defaults[CONF_MOP_INTERVAL_DAYS],
-                    ): vol.All(_strict_int, vol.Range(min=1, max=365)),
+                    ): vol.All(int, vol.Range(min=1, max=365)),
                     vol.Required(CONF_PRIORITY, default=defaults[CONF_PRIORITY]): vol.All(
-                        _strict_int, vol.Range(min=0)
+                        int, vol.Range(min=0)
                     ),
                     vol.Required(CONF_MODE, default=defaults[CONF_MODE]): vol.In(modes),
                 }
             ),
-            description_placeholders={"area_id": area_id},
+            description_placeholders={
+                "area_name": area_name,
+                "current": str(self._area_plan_index + 1),
+                "total": str(len(self._selected_area_ids)),
+            },
         )
 
     async def async_step_area_plan(
@@ -184,6 +192,15 @@ class VacuumPlannerConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-a
             return self.async_abort(reason="invalid_flow_state")
         if user_input is None:
             return self._area_plan_form()
+        try:
+            for key in (
+                CONF_VACUUM_INTERVAL_DAYS,
+                CONF_MOP_INTERVAL_DAYS,
+                CONF_PRIORITY,
+            ):
+                _strict_int(user_input[key])
+        except (KeyError, vol.Invalid):
+            return self.async_abort(reason="invalid_flow_state")
         area_id = self._selected_area_ids[self._area_plan_index]
         self._pending_area_plans[area_id] = dict(user_input)
         self._area_plan_index += 1

@@ -23,7 +23,7 @@ def test_manifest_declares_installable_config_flow_integration() -> None:
         "iot_class": "calculated",
         "issue_tracker": "https://github.com/t-flow-sash/ha-vacuum-planner/issues",
         "name": "Vacuum Planner",
-        "version": "0.1.0-beta.1",
+        "version": "0.1.0-beta.2",
     }
 
 
@@ -92,6 +92,13 @@ def test_config_flow_has_complete_english_and_german_translations() -> None:
         "config.step.areas.data.area_ids",
         "config.step.areas.description",
         "config.step.areas.title",
+        "config.step.area_plan.data.active",
+        "config.step.area_plan.data.mode",
+        "config.step.area_plan.data.mop_interval_days",
+        "config.step.area_plan.data.priority",
+        "config.step.area_plan.data.vacuum_interval_days",
+        "config.step.area_plan.description",
+        "config.step.area_plan.title",
         "config.step.user.data.vacuum_entity_id",
         "config.step.user.description",
         "config.step.user.title",
@@ -106,6 +113,9 @@ def test_config_flow_has_complete_english_and_german_translations() -> None:
         "entity.binary_sensor.ready.name",
         "entity.button.cancel_current_block.name",
         "entity.button.start_next.name",
+        "entity.number.priority.name",
+        "entity.number.vacuum_and_mop_interval.name",
+        "entity.number.vacuum_interval.name",
         "entity.sensor.capability_tier.name",
         "entity.sensor.current_phase.name",
         "entity.sensor.next_action.name",

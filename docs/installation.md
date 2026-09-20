@@ -2,7 +2,7 @@
 
 ## Status und Voraussetzungen
 
-`v0.1.0-beta.1` ist ein **unveröffentlichter privater Release-Kandidat** ohne Produktiv- oder Hardwarefreigabe. Für die Installation sind erforderlich:
+`v0.1.0-beta.2` ist ein **unveröffentlichter privater Release-Kandidat** ohne Produktiv- oder Hardwarefreigabe. Sein Config Flow wurde auf Home Assistant 2026.9.3 beaufsichtigt bis zur Raumplanung erfolgreich pilotiert. Für die Installation sind erforderlich:
 
 - ausdrückliche Berechtigung des Repository-Eigentümers;
 - authentifizierter Zugriff auf das private GitHub-Repository und dessen Release-Assets;
@@ -14,25 +14,25 @@ Der Zugriff auf Quelltext oder Artefakte ersetzt keine Lizenz. Maßgeblich ist d
 
 ## Primärer privater Installationsweg: semantisches Release-ZIP
 
-Sobald der Eigentümer den Kandidaten ausdrücklich als privaten GitHub-Release `v0.1.0-beta.1` bereitstellt, werden ausschließlich diese Assets verwendet:
+Sobald der Eigentümer den Kandidaten ausdrücklich als privaten GitHub-Release `v0.1.0-beta.2` bereitstellt, werden ausschließlich diese Assets verwendet:
 
-- `vacuum_planner-v0.1.0-beta.1.zip`
+- `vacuum_planner-v0.1.0-beta.2.zip`
 - `SHA256SUMS`
 
 ### Authentifiziert per GitHub CLI herunterladen
 
 ```bash
 gh auth status
-gh release download v0.1.0-beta.1 \
+gh release download v0.1.0-beta.2 \
   --repo t-flow-sash/ha-vacuum-planner \
-  --pattern 'vacuum_planner-v0.1.0-beta.1.zip' \
+  --pattern 'vacuum_planner-v0.1.0-beta.2.zip' \
   --pattern 'SHA256SUMS'
 sha256sum -c SHA256SUMS
 ```
 
 Alternativ können berechtigte Tester beide Assets in einer bereits authentifizierten GitHub-Browsersitzung herunterladen. Keine inoffiziellen Spiegel, automatisch erzeugten Source-Code-Archive oder Artefakte unbekannter Herkunft verwenden.
 
-> In diesem Repository-Stand wurde noch **kein Tag und kein GitHub-Release** erstellt. Bis der Eigentümer den privaten Kandidaten veröffentlicht, kann ein autorisierter Tester das identische Release-ZIP lokal mit `python scripts/build_release.py --version 0.1.0-beta.1` erzeugen und die ausgegebene SHA-256-Prüfsumme kontrollieren.
+> In diesem Repository-Stand wurde noch **kein Tag und kein GitHub-Release** erstellt. Bis der Eigentümer den privaten Kandidaten veröffentlicht, kann ein autorisierter Tester das identische Release-ZIP lokal mit `python scripts/build_release.py --version 0.1.0-beta.2` erzeugen und die ausgegebene SHA-256-Prüfsumme kontrollieren.
 
 ### Kopieren
 
@@ -75,7 +75,7 @@ Für die Integrationseinrichtung sind **keine YAML-Konfiguration**, keine `confi
 4. `start_next` nur im Dry-run auslösen und Statusübergänge prüfen.
 5. Home Assistant neu starten und die Wiederherstellung des Zustands kontrollieren.
 
-Dry-run verhindert den externen Reinigungsaufruf, ersetzt aber keinen beaufsichtigten Hardwaretest. Das Ausschalten ist für `v0.1.0-beta.1` nicht als Live-Pilot freigegeben.
+Dry-run verhindert den externen Reinigungsaufruf, ersetzt aber keinen beaufsichtigten Hardwaretest. Der erfolgreiche Config-Flow-Pilot erteilte keine Freigabe für reale Reinigungsbefehle; Dry-run darf für `v0.1.0-beta.2` nur in einem separat genehmigten, beaufsichtigten Hardwaretest ausgeschaltet werden.
 
 ## Dashboard
 

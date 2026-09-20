@@ -676,3 +676,115 @@ sha256 6d358ebb01d2f903c18d32c84c22f457ca6c44afca4e984ecf1fefa246fb4b12
 $ (cd dist && sha256sum -c SHA256SUMS)
 vacuum_planner-v0.1.0-beta.1.zip: OK
 ```
+
+## 2026-09-20 Config-Flow `VacuumEntityFeature` regression fix
+
+Live target inspection found Home Assistant Core `2026.9.3`. Official Core and both pinned
+lifecycle environments expose `VacuumEntityFeature.CLEAN_AREA == 16384`; the live vacuum states
+reported `supported_features` values `31676` and `30524`, both containing that bit. The live
+entity-registry entries are active `dreame_vacuum` and `robovac_mqtt` entities. The latter has a
+native `options.vacuum.area_mapping`; the former currently has no area mapping and must still be
+mapped in Home Assistant before its areas can be selected.
+
+The exact read-only validator harness reproduced the false negative only when the values used their
+native runtime type, `VacuumEntityFeature` (`IntFlag`): the same numeric masks represented as plain
+API integers passed. Home Assistant's `StateVacuumEntity.supported_features` contract returns that
+enum type, while the old validator required `type(value) is int`.
+
+```console
+$ .venv-dev/bin/pytest -q tests/test_config_flow.py::test_user_step_accepts_native_clean_area_feature_flags
+2 failed in 0.11s
+# both 31676 and 30524 remained on the user step
+
+$ .venv-dev/bin/pytest -q tests/test_config_flow.py::test_user_step_accepts_native_clean_area_feature_flags
+2 passed in 0.05s
+
+$ .venv-dev/bin/python -m pytest --cov=custom_components/vacuum_planner --cov-report=term-missing --cov-fail-under=90 -q
+370 passed in 1.15s
+TOTAL 2358 178 92%
+
+$ /tmp/ha-vp-2026.3.1/bin/python -m pytest -c tests_ha/pytest.ini tests_ha -q
+3 passed in 0.30s
+$ /tmp/ha-vp-2026.9.3/bin/python -m pytest -c tests_ha/pytest.ini tests_ha -q
+3 passed in 0.28s
+
+$ ruff check . && ruff format --check .
+All checks passed; 54 files already formatted
+$ mypy . --strict
+Success: no issues found in 54 source files
+$ bandit -q -r custom_components/vacuum_planner
+# exit 0
+$ python -m compileall -q custom_components tests tests_ha scripts
+# exit 0; JSON/YAML parse checks also passed
+
+$ .venv-dev/bin/python scripts/build_release.py --version 0.1.0-beta.2 --output-dir dist
+built /root/ha-vacuum-planner/dist/vacuum_planner-v0.1.0-beta.2.zip
+sha256 5f3a1cb4074c4abfa3487756ad81d17110547c4fd4a54f4e9059f40668502d25
+$ (cd dist && sha256sum -c SHA256SUMS)
+vacuum_planner-v0.1.0-beta.2.zip: OK
+```
+
+Three clean builds (two temporary outputs plus `dist`) were byte-identical. Independent review
+then found the same exact-type bug at runtime preflight and observer boundaries. Focused tests for
+both real native enum masks failed `2` cases before the preflight fix and passed `2` afterward; the
+observer native-enum test failed before the observer fix and passed afterward. The final artifact
+for that intermediate checkpoint included all three aligned fail-closed checks; the superseding
+artifact checksum is recorded below.
+
+### HA 2026.9 area-plan serialization and UX pilot closure
+
+The supervised live pilot had already recorded the real Home Assistant 2026.9.3 failure before
+this repository port: Probatio raised `ValueError: unable to serialize schema: <function
+_strict_int>` when the flow reached `area_plan`. After the live patch, the read-only REST flow
+reached `area_plan` without a matching log error, and the German frontend API returned the new
+step text. No Config Entry or vacuum command was created by that reproduction.
+
+The repository regression tests then reproduced the same boundaries before the live-tested change
+was copied. This is the observed RED output; it is not a reconstructed or invented run:
+
+```console
+$ .venv-dev/bin/python -m pytest -q tests/test_config_flow.py::test_area_step_collects_ui_only_plan_for_every_area tests/test_config_flow.py::test_area_plan_submit_rejects_malformed_integer_fields_fail_closed tests/test_config_flow.py::test_area_plan_submit_rejects_missing_integer_fields_fail_closed tests/test_integration_contract.py::test_config_flow_has_complete_english_and_german_translations
+11 failed in 0.20s
+
+$ /tmp/ha-vp-2026.9.3/bin/python -m pytest -c tests_ha/pytest.ini tests_ha/test_lifecycle.py::test_area_plan_form_schema_is_frontend_serializable -q
+ValueError: unable to serialize schema: <function _strict_int ...>
+1 failed in 0.26s
+```
+
+The final GREEN candidate keeps `int` plus range validators in the displayed schema, repeats the
+strict non-bool integer check at submit time for all three numeric fields, resolves the friendly
+Area name, and supplies `current`/`total` placeholders. The default, English, and German catalogs
+carry the exact schema field keys.
+
+```console
+$ .venv-dev/bin/python -m pytest -q tests/test_config_flow.py tests/test_native_area_adapter.py tests/test_backend_blockers.py tests/test_integration_contract.py tests/test_release_candidate_docs.py
+147 passed in 0.37s
+
+$ .venv-dev/bin/python -m pytest --cov=custom_components/vacuum_planner --cov-report=term-missing --cov-fail-under=90 -q
+377 passed in 1.22s
+TOTAL 2367 178 92%
+Required test coverage of 90% reached. Total coverage: 92.48%
+
+$ /tmp/ha-vp-2026.3.1/bin/python -m pytest -c tests_ha/pytest.ini tests_ha -q
+4 passed in 0.30s
+$ /tmp/ha-vp-2026.9.3/bin/python -m pytest -c tests_ha/pytest.ini tests_ha -q
+4 passed in 0.30s
+
+$ .venv-dev/bin/ruff check . && .venv-dev/bin/ruff format --check .
+All checks passed; 54 files already formatted
+$ .venv-dev/bin/mypy . --strict
+Success: no issues found in 54 source files
+$ .venv-dev/bin/bandit -q -r custom_components/vacuum_planner
+# exit 0
+$ .venv-dev/bin/python -m compileall -q custom_components tests tests_ha scripts
+# exit 0; 6 JSON and 3 YAML files also parsed successfully
+
+$ .venv-dev/bin/python scripts/build_release.py --version 0.1.0-beta.2 --output-dir dist
+built /root/ha-vacuum-planner/dist/vacuum_planner-v0.1.0-beta.2.zip
+sha256 ebe2eac1dd9827a88317af033ed90a3fc3b374dbd3eb5025554a655a2907d28c
+$ (cd dist && sha256sum -c SHA256SUMS)
+vacuum_planner-v0.1.0-beta.2.zip: OK
+```
+
+Two clean temporary builds and `dist` were byte-identical. The final archive has 29 sorted
+members, fixed ZIP timestamps, and byte-for-byte source parity.

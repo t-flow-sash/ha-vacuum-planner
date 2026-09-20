@@ -30,7 +30,7 @@ SERVICE_SKIP_AREA_TODAY = "skip_area_today"
 SERVICE_POSTPONE_AREA = "postpone_area"
 SERVICE_CANCEL_BLOCK = "cancel_block"
 SERVICE_RESOLVE_UNCERTAIN_RUN = "resolve_uncertain_run"
-PLATFORMS = ("sensor", "switch", "binary_sensor", "button")
+PLATFORMS = ("sensor", "switch", "binary_sensor", "button", "number")
 DEFAULT_TITLE = "Vacuum Planner"
 
 

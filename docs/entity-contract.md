@@ -9,6 +9,9 @@ Entity-Zustände sind eine UI-/Automationsprojektion. Plan und Queue werden auss
 | Plattform | Entity | Semantik | Kategorie |
 |---|---|---|---|
 | `switch` | Planung | automatische Planung aktiv/pausiert | config |
+| `number` | Saugintervall `<Raum>` | autoritatives Saugintervall, 1–365 Tage, Schritt 1 | config |
+| `number` | Saugen+Wischen-Intervall `<Raum>` | autoritatives Kombiintervall, 1–365 Tage, Schritt 1 | config |
+| `number` | Priorität `<Raum>` | autoritative Planungspriorität, Ganzzahl ab 0 | config |
 | `sensor` | Status | `idle`, `ready`, `committing`, `running`, `paused`, `attention` | – |
 | `sensor` | Nächste Aktion | lesbarer nächster Raum/Modus | – |
 | `sensor` | Ausstehende Aufgaben | Anzahl offener Jobs | – |
@@ -22,6 +25,14 @@ Entity-Zustände sind eine UI-/Automationsprojektion. Plan und Queue werden auss
 
 
 Selten benötigte Diagnoseentities sind standardmäßig deaktiviert.
+
+Für jeden konfigurierten Raum stellt die Integration genau diese drei nativen
+`number`-Entitäten selbst bereit. Es werden keine externen `input_number`-Helper und kein
+YAML-Package erzeugt oder benötigt. Ihre Werte sind direkte Projektionen der autoritativen
+`PlannerState.plan_revision`. Jeder Schreibzugriff erzeugt eine vollständige neue
+`PlanRevision`, läuft unter demselben Coordinator-Lock wie Actions und Worker und folgt
+**persist-before-publish**: Erst nach erfolgreichem Speichern werden Runtime und Entities
+aktualisiert. Bei einem Speicherfehler bleiben Revision und sichtbare Werte unverändert.
 
 ## Entity-Attribute
 

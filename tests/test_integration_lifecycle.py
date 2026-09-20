@@ -86,9 +86,9 @@ def test_setup_forwards_sensor_platform_and_unload_removes_it() -> None:
     )
 
     assert asyncio.run(async_setup_entry(hass, entry)) is True
-    assert forwarded == [(entry, ("sensor", "switch", "binary_sensor", "button"))]
+    assert forwarded == [(entry, ("sensor", "switch", "binary_sensor", "button", "number"))]
     assert asyncio.run(async_unload_entry(hass, entry)) is True
-    assert unloaded == [(entry, ("sensor", "switch", "binary_sensor", "button"))]
+    assert unloaded == [(entry, ("sensor", "switch", "binary_sensor", "button", "number"))]
     assert entry.runtime_data is None
 
 

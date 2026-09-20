@@ -1,6 +1,6 @@
 # Beta-Umfang und Freigabegates
 
-## Ziel dieses Kandidaten (`v0.1.0-beta.1`)
+## Ziel dieses Kandidaten (`v0.1.0-beta.2`)
 
 Der Kandidat macht den vorhandenen Integrationsstand installierbar und prüfbar, ohne eine Produktionsfreigabe vorzutäuschen. Er dient für Installation, UI-Onboarding, Vertragsprüfung, persistente Zustände und Shadow-/Dry-run-Auswertung.
 
@@ -37,7 +37,7 @@ Der Kandidat macht den vorhandenen Integrationsstand installierbar und prüfbar,
 - automatische Dashboard-Anlage;
 - Migration eines installationsspezifischen Altsystems;
 - garantierte Gerätequeue-Atomizität;
-- Git-Tag, GitHub-Release, Commit oder Push durch diesen Slice; `v0.1.0-beta.1` ist nur als Kandidat vorbereitet.
+- Git-Tag oder GitHub-Release; `v0.1.0-beta.2` ist ein unveröffentlichter Kandidat.
 
 ## Eintrittskriterien für einen späteren beaufsichtigten Live-Pilot
 

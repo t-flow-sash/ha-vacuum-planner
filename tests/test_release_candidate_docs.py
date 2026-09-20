@@ -57,7 +57,7 @@ def test_installation_is_honest_for_private_beta_and_ui_only() -> None:
     installation = _text(ROOT / "docs" / "installation.md").lower()
     readme = _text(ROOT / "README.md").lower()
     assert "authentifiziert" in installation
-    assert "v0.1.0-beta.1" in installation
+    assert "v0.1.0-beta.2" in installation
     assert "release-zip" in installation
     assert "privat" in installation
     assert "hacs" in installation
@@ -119,6 +119,21 @@ def test_importable_dashboard_uses_only_standard_cards_and_sections() -> None:
     assert "state_attr('sensor.vacuum_planner_queue', 'items')" in serialized
 
 
+def test_dashboard_uses_native_planner_numbers_without_external_helpers() -> None:
+    dashboard = _text(DASHBOARD / "vacuum-planner.yaml").lower()
+    dashboard_readme = _text(DASHBOARD / "README.md").lower()
+    entity_contract = _text(ROOT / "docs" / "entity-contract.md").lower()
+
+    assert "input_number" not in dashboard
+    assert "input_number" in dashboard_readme
+    assert "keine externen helper" in dashboard_readme
+    assert "`number`" in entity_contract
+    assert "saugintervall" in entity_contract
+    assert "saugen+wischen-intervall" in entity_contract
+    assert "priorität" in entity_contract
+    assert "persist-before-publish" in entity_contract
+
+
 def test_dashboard_completed_rows_are_grey_labeled_and_controls_are_large() -> None:
     dashboard = yaml.safe_load(_text(DASHBOARD / "vacuum-planner.yaml"))
     serialized = _text(DASHBOARD / "vacuum-planner.yaml")
@@ -152,11 +167,11 @@ def test_release_candidate_version_and_status_are_consistent() -> None:
     release_notes = _text(ROOT / "RELEASE_NOTES.md").lower()
     changelog = _text(ROOT / "CHANGELOG.md").lower()
 
-    assert manifest["version"] == "0.1.0-beta.1"
-    assert "v0.1.0-beta.1" in release_notes
+    assert manifest["version"] == "0.1.0-beta.2"
+    assert "v0.1.0-beta.2" in release_notes
     assert "release-kandidat" in release_notes
     assert "kein tag" in release_notes
-    assert "v0.1.0-beta.1" in changelog
+    assert "v0.1.0-beta.2" in changelog
     assert "kandidat" in changelog
 
 
@@ -164,12 +179,12 @@ def test_release_zip_builder_is_reproducible_and_has_expected_layout(tmp_path: P
     script = ROOT / "scripts" / "build_release.py"
     first = tmp_path / "first"
     second = tmp_path / "second"
-    command = [sys.executable, str(script), "--version", "0.1.0-beta.1"]
+    command = [sys.executable, str(script), "--version", "0.1.0-beta.2"]
 
     subprocess.run([*command, "--output-dir", str(first)], cwd=ROOT, check=True)  # noqa: S603
     subprocess.run([*command, "--output-dir", str(second)], cwd=ROOT, check=True)  # noqa: S603
 
-    archive_name = "vacuum_planner-v0.1.0-beta.1.zip"
+    archive_name = "vacuum_planner-v0.1.0-beta.2.zip"
     first_zip = first / archive_name
     second_zip = second / archive_name
     assert first_zip.read_bytes() == second_zip.read_bytes()

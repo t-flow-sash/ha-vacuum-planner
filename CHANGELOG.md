@@ -2,9 +2,16 @@
 
 Alle wesentlichen Änderungen werden in dieser Datei dokumentiert. Es wurde noch kein Release veröffentlicht.
 
-## v0.1.0-beta.1 – Release-Kandidat (unveröffentlicht)
+## v0.1.0-beta.2 – Release-Kandidat (unveröffentlicht)
 
-> Kandidat zur Prüfung: kein Git-Tag, kein GitHub-Release, kein Commit und keine öffentliche Freigabe wurden durch diesen Stand erstellt.
+> Kandidat zur Prüfung: kein Git-Tag, kein GitHub-Release und keine öffentliche Freigabe wurden durch diesen Stand erstellt.
+
+### Fixed
+
+- Config Flow akzeptiert Home Assistants native `VacuumEntityFeature`-Bitmaske für `CLEAN_AREA`, statt echte `IntFlag`-Werte fälschlich als nicht unterstützten Typ abzulehnen.
+- Config Flow, Dispatch-Preflight und Laufzeit-Observer verwenden dieselbe fail-closed Capability-Prüfung, einschließlich Ablehnung von Bool-, negativen und malformed Werten.
+- Das `area_plan`-Schema nutzt nur frontend-serialisierbare Validatoren; strikte Ganzzahlprüfung bleibt beim Submit erhalten.
+- Die Raumplanung zeigt freundliche Area-Namen und den aktuellen Fortschritt sowie vollständige Standard-, deutsche und englische Übersetzungen.
 
 ### Added
 

@@ -2,7 +2,7 @@
 
 Herstellerneutraler, raumbasierter Planer für vorhandene Home-Assistant-Sauger – mit UI-Einrichtung, persistenter Queue und sicherem Dry-run als Standard.
 
-> **Projektstatus: privater Release-Kandidat `v0.1.0-beta.1`.** Der primäre Installationsweg ist das authentifiziert bezogene, semantisch versionierte Release-ZIP mit SHA-256-Prüfung und anschließender Ordnerkopie. Das private Repository ist nicht über HACS installierbar; HACS kommt nur nach einer späteren öffentlichen Erreichbarkeit und ausdrücklichen Freigabe infrage. Es gibt noch keinen Tag oder Release. Die Integration wurde **noch nicht an einer produktiven Instanz oder realer Hardware erprobt**. Dry-run bleibt Standard; ein Live-Pilot ist nicht freigegeben.
+> **Projektstatus: privater Release-Kandidat `v0.1.0-beta.2`.** Der primäre Installationsweg ist das authentifiziert bezogene, semantisch versionierte Release-ZIP mit SHA-256-Prüfung und anschließender Ordnerkopie. Das private Repository ist nicht über HACS installierbar; HACS kommt nur nach einer späteren öffentlichen Erreichbarkeit und ausdrücklichen Freigabe infrage. Es gibt noch keinen Tag oder Release. Der Config Flow wurde auf Home Assistant 2026.9.3 in einem beaufsichtigten Pilot erfolgreich bis zur Raumplanung geprüft; reale Reinigungsbefehle und unbeaufsichtigter Betrieb sind weiterhin nicht freigegeben. Dry-run bleibt Standard.
 
 ## Was der Beta-Kandidat liefert
 
@@ -36,7 +36,7 @@ Siehe [Beta-Umfang](docs/beta-scope.md), [bekannte Grenzen](docs/limitations.md)
 5. Dry-run aktiviert lassen und zunächst nur Zustände, Queue und Actions prüfen.
 6. Optional die vollständige Standardkarten-Konfiguration nach der [Dashboard-Anleitung](dashboard/README.md) importieren.
 
-Es sind weder `configuration.yaml` noch Packages, Helper-YAML oder Automations-YAML erforderlich.
+Es sind weder `configuration.yaml` noch Packages, externe `input_number`-Helper, Helper-YAML oder Automations-YAML erforderlich. Raumbezogene Intervalle und Prioritäten stellt die Integration als native, übersetzte Number-Entitäten bereit.
 
 ## Dokumentation
 
@@ -76,7 +76,7 @@ bandit -q -r custom_components/vacuum_planner
 python -m compileall -q custom_components tests
 ```
 
-Die dokumentierten RED-/GREEN-Läufe stehen unter [TDD evidence](docs/development/tdd-evidence.md). `v0.1.0-beta.1` bezeichnet hier nur den vorbereiteten Kandidaten; es werden kein Tag, kein GitHub-Release und kein Commit angelegt.
+Die dokumentierten RED-/GREEN-Läufe stehen unter [TDD evidence](docs/development/tdd-evidence.md). `v0.1.0-beta.2` bezeichnet hier den unveröffentlichten Kandidaten; es werden kein Tag und kein GitHub-Release angelegt.
 
 ## Lizenz
 

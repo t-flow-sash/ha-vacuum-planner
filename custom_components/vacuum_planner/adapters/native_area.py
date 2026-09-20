@@ -156,7 +156,8 @@ class NativeAreaAdapter:
         )
         supported_features = state.attributes.get("supported_features")
         if (
-            type(supported_features) is not int
+            isinstance(supported_features, bool)
+            or not isinstance(supported_features, int)
             or supported_features < 0
             or not (supported_features & int(vacuum.VacuumEntityFeature.CLEAN_AREA))
         ):

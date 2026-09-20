@@ -19,6 +19,17 @@
         "description": "Wähle die Home-Assistant-Bereiche für die Planung aus. Ihre Reihenfolge wird als stabile Standardreihenfolge verwendet. Jeder Bereich muss bereits durch die Saugroboter-Integration zugeordnet sein.",
         "title": "Zugeordnete Bereiche auswählen"
       },
+      "area_plan": {
+        "data": {
+          "active": "Raum in die Planung aufnehmen",
+          "vacuum_interval_days": "Saugintervall (Tage)",
+          "mop_interval_days": "Wischintervall (Tage)",
+          "priority": "Priorität",
+          "mode": "Reinigungsmodus"
+        },
+        "description": "Raum {current} von {total}. Lege fest, wie häufig {area_name} gereinigt werden soll.",
+        "title": "Intervalle für {area_name} festlegen"
+      },
       "user": {
         "data": {
           "vacuum_entity_id": "Saugroboter"
@@ -60,6 +71,17 @@
     "switch": {
       "planning": {
         "name": "Planung"
+      }
+    },
+    "number": {
+      "vacuum_interval": {
+        "name": "Saugintervall {area_name}"
+      },
+      "vacuum_and_mop_interval": {
+        "name": "Saugen-und-Wischen-Intervall {area_name}"
+      },
+      "priority": {
+        "name": "Priorität {area_name}"
       }
     },
     "binary_sensor": {

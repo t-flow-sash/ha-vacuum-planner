@@ -19,6 +19,19 @@ Home Assistant vergibt Entity-IDs beim Anlegen eines Config Entry. Damit dieselb
 
 Das sind ausschließlich Entities der Integration; keine Sauger-, Hersteller- oder Segment-ID wird in das Dashboard eingetragen. Falls eine ID bereits belegt ist, muss sie zuerst bereinigt werden. Ohne diese eindeutige Zuordnung zeigt Home Assistant die betroffenen Karten als nicht verfügbar an.
 
+## Raumplan bearbeiten: native Number-Entitäten
+
+Für jeden konfigurierten Raum erzeugt Vacuum Planner selbst drei native `number`-Entitäten:
+Saugintervall, Saugen+Wischen-Intervall und Priorität. Diese lassen sich über **Karte
+hinzufügen → Nach Entität** direkt als Tile- oder Entities-Karte in den Bereich „Steuerung
+und Diagnose“ aufnehmen. Die konkrete Entity-ID hängt vom Raum und Config Entry ab; die
+stabile Unique ID und der übersetzte Raumname kommen von der Integration.
+
+Es sind **keine externen Helper** (`input_number`), keine Helper-Automationen und kein
+YAML-Package nötig. Das Dashboard darf Planwerte ausschließlich über diese nativen
+Integration-Entities ändern; HA-State-Listener oder Debounce-Automationen für
+`input_number` gehören ausdrücklich nicht zum Vertrag.
+
 ## Import
 
 1. Ein neues leeres Dashboard **Saugplanung** anlegen; kein bestehendes Dashboard überschreiben.

@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from enum import IntFlag
 from types import SimpleNamespace
 
 import pytest
@@ -11,8 +12,17 @@ from custom_components.vacuum_planner.adapters.native_area import (
 from custom_components.vacuum_planner.domain.models import Mode
 
 
+class NativeVacuumEntityFeature(IntFlag):
+    CLEAN_AREA = 16384
+
+
+@pytest.mark.parametrize(
+    "supported_features",
+    [NativeVacuumEntityFeature(31676), NativeVacuumEntityFeature(30524)],
+)
 def test_native_area_adapter_dispatches_ordered_ha_area_ids(
     monkeypatch: pytest.MonkeyPatch,
+    supported_features: NativeVacuumEntityFeature,
 ) -> None:
     calls: list[tuple[str, str, dict[str, object], dict[str, object], bool, object]] = []
     context = object()
@@ -36,7 +46,7 @@ def test_native_area_adapter_dispatches_ordered_ha_area_ids(
         services=Services(),
         states=SimpleNamespace(
             get=lambda _entity_id: SimpleNamespace(
-                state="idle", attributes={"supported_features": 16384}
+                state="idle", attributes={"supported_features": supported_features}
             )
         ),
     )

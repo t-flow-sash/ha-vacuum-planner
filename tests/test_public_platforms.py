@@ -82,7 +82,7 @@ def entry() -> SimpleNamespace:
 
 def test_public_platforms_expose_stable_service_entities(monkeypatch: pytest.MonkeyPatch) -> None:
     install_platform_stubs(monkeypatch)
-    assert PLATFORMS == ("sensor", "switch", "binary_sensor", "button")
+    assert PLATFORMS == ("sensor", "switch", "binary_sensor", "button", "number")
     created: list[object] = []
     config_entry = entry()
 

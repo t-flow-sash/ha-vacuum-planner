@@ -3,6 +3,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from enum import IntFlag
 from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
@@ -43,6 +44,10 @@ from custom_components.vacuum_planner.domain.queue import (
 )
 
 AT = datetime(2026, 9, 19, 10, tzinfo=UTC)
+
+
+class NativeVacuumEntityFeature(IntFlag):
+    CLEAN_AREA = 16384
 
 
 def _install_valid_topology_modules(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -816,8 +821,13 @@ def test_listener_subscription_is_removed_on_successful_unload() -> None:
     assert unsubscribed == [True]
 
 
+@pytest.mark.parametrize(
+    "supported_features",
+    [NativeVacuumEntityFeature(31676), NativeVacuumEntityFeature(30524)],
+)
 def test_observer_subscribes_to_the_runtime_entity_and_schedules_state_events(
     monkeypatch: pytest.MonkeyPatch,
+    supported_features: NativeVacuumEntityFeature,
 ) -> None:
     callbacks: list[tuple[tuple[str, ...], object]] = []
     removed: list[bool] = []
@@ -841,11 +851,15 @@ def test_observer_subscribes_to_the_runtime_entity_and_schedules_state_events(
     event_callback(
         SimpleNamespace(
             data={
-                "new_state": SimpleNamespace(state="cleaning", attributes={}),
+                "new_state": SimpleNamespace(
+                    state="cleaning",
+                    attributes={"supported_features": supported_features},
+                ),
             },
             time_fired=AT,
         )
     )
+    assert runtime.topology_ready is True
     assert len(tasks) == 1
     tasks[0].close()
     assert runtime.observer_unsubscribe is not None

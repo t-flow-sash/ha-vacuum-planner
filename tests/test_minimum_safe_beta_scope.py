@@ -99,7 +99,9 @@ class MinimumSafeBetaScopeTests(unittest.TestCase):
     def test_public_runtime_inventory_has_no_removed_platform_or_api(self) -> None:
         const_source = (COMPONENT / "const.py").read_text(encoding="utf-8")
         init_source = (COMPONENT / "__init__.py").read_text(encoding="utf-8")
-        assert 'PLATFORMS = ("sensor", "switch", "binary_sensor", "button")' in const_source
+        assert (
+            'PLATFORMS = ("sensor", "switch", "binary_sensor", "button", "number")' in const_source
+        )
         assert not (COMPONENT / "event.py").exists()
         assert not (COMPONENT / "websocket_api.py").exists()
         assert "websocket_api" not in init_source
@@ -107,9 +109,20 @@ class MinimumSafeBetaScopeTests(unittest.TestCase):
 
     def test_public_entity_catalog_contains_only_planner_level_entities(self) -> None:
         catalog = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))
-        assert set(catalog["entity"]) == {"binary_sensor", "button", "sensor", "switch"}
+        assert set(catalog["entity"]) == {
+            "binary_sensor",
+            "button",
+            "number",
+            "sensor",
+            "switch",
+        }
         assert set(catalog["entity"]["binary_sensor"]) == {"attention", "ready"}
         assert set(catalog["entity"]["button"]) == {"cancel_current_block", "start_next"}
+        assert set(catalog["entity"]["number"]) == {
+            "priority",
+            "vacuum_and_mop_interval",
+            "vacuum_interval",
+        }
         assert set(catalog["entity"]["sensor"]) == {
             "capability_tier",
             "current_phase",

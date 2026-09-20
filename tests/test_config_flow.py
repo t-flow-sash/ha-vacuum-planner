@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import sys
+from collections.abc import Iterator
 from enum import IntFlag
 from types import ModuleType, SimpleNamespace
 from typing import Any, ClassVar, Generic, TypeVar, cast
@@ -37,6 +38,13 @@ class StubConfigEntryDisabler:
 MISSING_SUPPORTED_FEATURES = object()
 REGISTRY_OPTIONS_FROM_AREA_MAPPING = object()
 RuntimeDataT = TypeVar("RuntimeDataT")
+
+
+@pytest.fixture(autouse=True)
+def cleanup_area_registry_stub() -> Iterator[None]:
+    """Do not leak the Config Flow's HA stub into later test modules."""
+    yield
+    sys.modules.pop("homeassistant.helpers.area_registry", None)
 
 
 class StubConfigEntry(Generic[RuntimeDataT]):
@@ -136,6 +144,17 @@ class StubAreaSelector:
         return value
 
 
+class StubAreaRegistry:
+    def __init__(self) -> None:
+        self.entries = {
+            "kitchen": SimpleNamespace(name="Kitchen"),
+            "hallway": SimpleNamespace(name="Hallway"),
+        }
+
+    def async_get_area(self, area_id: str) -> object | None:
+        return self.entries.get(area_id)
+
+
 class StubEntityRegistry:
     def __init__(
         self,
@@ -190,8 +209,12 @@ def import_config_flow() -> ModuleType:
     vars(config_entries)["OptionsFlowWithReload"] = StubOptionsFlowWithReload
     vars(const)["ATTR_SUPPORTED_FEATURES"] = "supported_features"
     helpers = ModuleType("homeassistant.helpers")
+    area_registry = ModuleType("homeassistant.helpers.area_registry")
     entity_registry = ModuleType("homeassistant.helpers.entity_registry")
     selector = ModuleType("homeassistant.helpers.selector")
+    vars(area_registry)["async_get"] = lambda hass: getattr(
+        hass, "area_registry", StubAreaRegistry()
+    )
     vars(entity_registry)["async_get"] = lambda hass: hass.entity_registry
     vars(selector)["EntitySelector"] = StubEntitySelector
     vars(selector)["EntitySelectorConfig"] = StubEntitySelectorConfig
@@ -202,6 +225,7 @@ def import_config_flow() -> ModuleType:
     vars(homeassistant)["const"] = const
     vars(components)["vacuum"] = vacuum
     vars(homeassistant)["helpers"] = helpers
+    vars(helpers)["area_registry"] = area_registry
     vars(helpers)["entity_registry"] = entity_registry
     vars(helpers)["selector"] = selector
     sys.modules.update(
@@ -212,6 +236,7 @@ def import_config_flow() -> ModuleType:
             "homeassistant.config_entries": config_entries,
             "homeassistant.const": const,
             "homeassistant.helpers": helpers,
+            "homeassistant.helpers.area_registry": area_registry,
             "homeassistant.helpers.entity_registry": entity_registry,
             "homeassistant.helpers.selector": selector,
         }
@@ -264,6 +289,7 @@ def configured_flow(
 
     flow.hass = SimpleNamespace(
         states=SimpleNamespace(get=lambda _entity_id: state),
+        area_registry=StubAreaRegistry(),
         entity_registry=StubEntityRegistry(
             registry_id,
             (
@@ -423,6 +449,11 @@ def test_area_step_collects_ui_only_plan_for_every_area(
 
     first = asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen", "hallway"]}))
     assert first["step_id"] == "area_plan"
+    assert first["description_placeholders"] == {
+        "area_name": "Kitchen",
+        "current": "1",
+        "total": "2",
+    }
     assert set(first["data_schema"]({})) == {
         "active",
         "vacuum_interval_days",
@@ -442,6 +473,11 @@ def test_area_step_collects_ui_only_plan_for_every_area(
         )
     )
     assert second["step_id"] == "area_plan"
+    assert second["description_placeholders"] == {
+        "area_name": "Hallway",
+        "current": "2",
+        "total": "2",
+    }
     result = asyncio.run(
         flow.async_step_area_plan(
             {
@@ -546,14 +582,22 @@ def test_area_plan_rejects_automatic_mode() -> None:
 
 
 @pytest.mark.parametrize(
-    "field",
-    [CONF_VACUUM_INTERVAL_DAYS, CONF_MOP_INTERVAL_DAYS, CONF_PRIORITY],
+    ("field", "invalid_value"),
+    [
+        (CONF_VACUUM_INTERVAL_DAYS, True),
+        (CONF_MOP_INTERVAL_DAYS, True),
+        (CONF_PRIORITY, True),
+        (CONF_VACUUM_INTERVAL_DAYS, "7"),
+        (CONF_MOP_INTERVAL_DAYS, 7.0),
+        (CONF_PRIORITY, None),
+    ],
 )
-def test_area_plan_rejects_bool_for_integer_fields(field: str) -> None:
+def test_area_plan_submit_rejects_malformed_integer_fields_fail_closed(
+    field: str, invalid_value: object
+) -> None:
     flow = configured_flow(entity_exists=True, area_mapping={"kitchen": ["7"]})
     asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
     asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
-    form = asyncio.run(flow.async_step_area_plan())
     values = {
         "active": True,
         CONF_VACUUM_INTERVAL_DAYS: 7,
@@ -561,10 +605,35 @@ def test_area_plan_rejects_bool_for_integer_fields(field: str) -> None:
         CONF_PRIORITY: 0,
         "mode": "vacuum",
     }
-    values[field] = True
+    values[field] = invalid_value
 
-    with pytest.raises(vol.Invalid):
-        form["data_schema"](values)
+    result = asyncio.run(flow.async_step_area_plan(values))
+
+    assert result == {"type": "abort", "reason": "invalid_flow_state"}
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [CONF_VACUUM_INTERVAL_DAYS, CONF_MOP_INTERVAL_DAYS, CONF_PRIORITY],
+)
+def test_area_plan_submit_rejects_missing_integer_fields_fail_closed(
+    missing_field: str,
+) -> None:
+    flow = configured_flow(entity_exists=True, area_mapping={"kitchen": ["7"]})
+    asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))
+    asyncio.run(flow.async_step_areas({CONF_AREA_IDS: ["kitchen"]}))
+    values = {
+        "active": True,
+        CONF_VACUUM_INTERVAL_DAYS: 7,
+        CONF_MOP_INTERVAL_DAYS: 7,
+        CONF_PRIORITY: 0,
+        "mode": "vacuum",
+    }
+    del values[missing_field]
+
+    result = asyncio.run(flow.async_step_area_plan(values))
+
+    assert result == {"type": "abort", "reason": "invalid_flow_state"}
 
 
 def test_area_step_creates_entry_with_ordered_mapped_ha_area_ids() -> None:
@@ -756,10 +825,16 @@ def test_area_step_rejects_duplicate_area_ids() -> None:
     assert result["errors"] == {CONF_AREA_IDS: "areas_duplicate"}
 
 
-def test_user_step_accepts_clean_area_combined_with_other_features() -> None:
+@pytest.mark.parametrize(
+    "supported_features",
+    [StubVacuumEntityFeature(31676), StubVacuumEntityFeature(30524)],
+)
+def test_user_step_accepts_native_clean_area_feature_flags(
+    supported_features: StubVacuumEntityFeature,
+) -> None:
     flow = configured_flow(
         entity_exists=True,
-        supported_features=int(StubVacuumEntityFeature.CLEAN_AREA) | 8192,
+        supported_features=supported_features,
     )
 
     result = asyncio.run(flow.async_step_user({CONF_VACUUM_ENTITY_ID: "vacuum.downstairs"}))

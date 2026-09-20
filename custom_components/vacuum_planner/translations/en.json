@@ -19,6 +19,17 @@
         "description": "Select the Home Assistant areas to plan. Their order is used as the stable default order. Every selected area must already be mapped by the vacuum integration.",
         "title": "Select mapped areas"
       },
+      "area_plan": {
+        "data": {
+          "active": "Include room in planning",
+          "vacuum_interval_days": "Vacuum interval (days)",
+          "mop_interval_days": "Mopping interval (days)",
+          "priority": "Priority",
+          "mode": "Cleaning mode"
+        },
+        "description": "Room {current} of {total}. Configure how often {area_name} should be cleaned.",
+        "title": "Set intervals for {area_name}"
+      },
       "user": {
         "data": {
           "vacuum_entity_id": "Vacuum"
@@ -60,6 +71,17 @@
     "switch": {
       "planning": {
         "name": "Planning"
+      }
+    },
+    "number": {
+      "vacuum_interval": {
+        "name": "{area_name} vacuum interval"
+      },
+      "vacuum_and_mop_interval": {
+        "name": "{area_name} vacuum and mop interval"
+      },
+      "priority": {
+        "name": "{area_name} priority"
       }
     },
     "binary_sensor": {

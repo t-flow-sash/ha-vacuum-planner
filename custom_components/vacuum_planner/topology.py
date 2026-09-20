@@ -43,7 +43,8 @@ def async_get_valid_vacuum(
         return None, "entity_not_found"
     supported_features = state.attributes.get(ha_const.ATTR_SUPPORTED_FEATURES)
     if (
-        type(supported_features) is not int
+        isinstance(supported_features, bool)
+        or not isinstance(supported_features, int)
         or supported_features < 0
         or not supported_features & int(vacuum.VacuumEntityFeature.CLEAN_AREA)
     ):
