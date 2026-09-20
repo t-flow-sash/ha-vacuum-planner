@@ -41,13 +41,12 @@ Der Kandidat macht den vorhandenen Integrationsstand installierbar und prüfbar,
 
 ## Eintrittskriterien für einen späteren beaufsichtigten Live-Pilot
 
-1. Lizenzblocker ist durch den Repository-Eigentümer entschieden.
-2. Vollständiges Home-Assistant-Backup und getesteter Rollback liegen vor.
-3. Shadow-/Dry-run zeigt über repräsentative Tage keine ungeklärten Abweichungen.
-4. Gewählter Sauger, Areas und Capabilities sind in der konkreten Installation validiert.
-5. Keine offenen Repairs oder `uncertain`-Läufe.
-6. Pilotumfang ist auf einen Sauger und wenige Räume begrenzt.
-7. Eine Person gibt den Pilot ausdrücklich frei und beaufsichtigt Start, Fehler und Abbruch.
+1. Vollständiges Home-Assistant-Backup und getesteter Rollback liegen vor.
+2. Shadow-/Dry-run zeigt über repräsentative Tage keine ungeklärten Abweichungen.
+3. Gewählter Sauger, Areas und Capabilities sind in der konkreten Installation validiert.
+4. Keine offenen Repairs oder `uncertain`-Läufe.
+5. Pilotumfang ist auf einen Sauger und wenige Räume begrenzt.
+6. Eine Person gibt den Pilot ausdrücklich frei und beaufsichtigt Start, Fehler und Abbruch.
 
 Bis alle Kriterien erfüllt und die Freigabe dokumentiert sind, bleibt Dry-run aktiv.
 

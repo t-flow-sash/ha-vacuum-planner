@@ -82,12 +82,12 @@ def test_rollback_requires_backup_and_stopped_home_assistant_for_store_edits() -
     assert "private copy-/release-zip-installation" in rollback
 
 
-def test_license_file_records_blocker_without_claiming_mit() -> None:
+def test_repository_declares_the_approved_mit_license() -> None:
     pyproject = _text(ROOT / "pyproject.toml").lower()
     license_text = _text(ROOT / "LICENSE").lower()
-    assert "license" not in pyproject
-    assert "keine open-source-lizenz" in license_text
-    assert "mit license" not in license_text
+    assert 'license = "mit"' in pyproject
+    assert "mit license" in license_text
+    assert "copyright (c) 2026 t-flow sash" in license_text
 
 
 def test_dashboard_artifacts_are_parseable_and_vendor_neutral() -> None:

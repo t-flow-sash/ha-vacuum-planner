@@ -80,4 +80,4 @@ Die dokumentierten RED-/GREEN-Läufe stehen unter [TDD evidence](docs/developmen
 
 ## Lizenz
 
-Für das Repository ist noch keine Open-Source-Lizenz festgelegt. Details und der Release-Blocker stehen in [`LICENSE`](LICENSE).
+Vacuum Planner wird unter der [MIT-Lizenz](LICENSE) veröffentlicht.

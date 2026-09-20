@@ -43,5 +43,4 @@ Alle wesentlichen Änderungen werden in dieser Datei dokumentiert. Es wurde noch
 
 - keine Live-/Hardwarevalidierung;
 - kein veröffentlichter Tag oder Release;
-- privates Repository ist nicht über HACS installierbar;
-- keine Open-Source-Lizenz durch den Repository-Eigentümer festgelegt.
+- HACS-Veröffentlichungsprüfung und öffentlicher Release stehen noch aus.

@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "ha-vacuum-planner"
 version = "0.1.0-beta.2"
 description = "Home Assistant independent domain core for Vacuum Planner"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = []
 

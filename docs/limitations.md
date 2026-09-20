@@ -42,4 +42,4 @@
 ## Release und Lizenz
 
 - Dieser Stand ist ein Kandidat, kein getaggtes oder veröffentlichtes Release; die Versionsnummer wurde für diesen Dokumentations-Slice nicht erhöht.
-- Für das Repository wurde noch keine Open-Source-Lizenz festgelegt. Eine öffentliche Distribution ist dadurch blockiert; siehe [`LICENSE`](../LICENSE).
+- Der Quellcode steht unter der [MIT-Lizenz](../LICENSE). Ein getaggter öffentlicher Release und die HACS-Veröffentlichungsprüfung stehen weiterhin aus.
