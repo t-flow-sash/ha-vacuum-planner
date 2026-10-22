@@ -1,0 +1,4 @@
+# Custom label assigned to this repository-scoped self-hosted runner.
+self-hosted-runner:
+  labels:
+    - repo-ha-vacuum-planner
