@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches:
-      - main
-  pull_request:
+      - "**"
+      - "!dependabot/**"
   workflow_dispatch:
 
 permissions:
@@ -17,10 +17,6 @@ concurrency:
 jobs:
   quality:
     name: Python quality gates
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor == github.repository_owner &&
-      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, repo-ha-vacuum-planner]
     steps:
       - name: Check out repository
@@ -57,10 +53,6 @@ jobs:
 
   home-assistant-contract:
     name: Real Home Assistant lifecycle (${{ matrix.homeassistant }})
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor == github.repository_owner &&
-      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, repo-ha-vacuum-planner]
     strategy:
       fail-fast: false
@@ -94,10 +86,6 @@ jobs:
 
   hassfest:
     name: Home Assistant structure
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor == github.repository_owner &&
-      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, repo-ha-vacuum-planner]
     steps:
       - name: Check out repository
@@ -107,10 +95,6 @@ jobs:
 
   hacs:
     name: HACS validation
-    if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor == github.repository_owner &&
-      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, repo-ha-vacuum-planner]
     steps:
       - name: Check out repository
